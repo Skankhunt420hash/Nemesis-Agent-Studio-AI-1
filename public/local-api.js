@@ -224,6 +224,35 @@
     };
   }
 
+  function publicStats(agent) {
+    const sessions = Object.values(agent.publicConversations || {});
+    const publicMessages = sessions.reduce((sum, convo) => sum + ((convo?.messages || []).length), 0);
+    return {
+      messages: publicMessages,
+      conversations: sessions.filter((convo) => (convo?.messages || []).length > 0).length,
+    };
+  }
+
+  function findPublicAgent(state, slug, key) {
+    const agent = state.agents.find((item) => item.slug === slug);
+    if (!agent) return null;
+    if (String(agent.publicKey || '') !== String(key || '')) return 'forbidden';
+    return agent;
+  }
+
+  function ensurePublicConversation(agent, visitorId) {
+    agent.publicConversations ||= {};
+    const key = String(visitorId || 'guest').trim() || 'guest';
+    agent.publicConversations[key] ||= { id: uid('pubconv_'), visitorId: key, messages: [], createdAt: nowIso(), updatedAt: nowIso() };
+    return agent.publicConversations[key];
+  }
+
+  function buildPublicReply(agent, message) {
+    const knowledge = Array.isArray(agent.knowledgeItems) ? agent.knowledgeItems.slice(0, 2).map((item) => item.title).filter(Boolean) : [];
+    const hints = [agent.description, agent.businessType, knowledge.length ? `Wissen: ${knowledge.join(', ')}` : ''];
+    return `${agent.name}: ${String(message || '').slice(0, 160)} — klar. ${hints.filter(Boolean).slice(0, 2).join(' · ')}. Demo-Modus: ich würde als Nächstes konkretisieren, testen und dann automatisieren.`;
+  }
+
   function buildFineTuneJob(agent) {
     const profile = { ...defaultFineTuneProfile(), ...(agent.fineTuneProfile || {}) };
     const knowledgeCount = Array.isArray(agent.knowledgeItems) ? agent.knowledgeItems.length : 0;
@@ -381,6 +410,64 @@
       return json({ ok: true, demoMode: true });
     }
 
+    const publicAgentMatch = path.match(/^\/api\/public\/agent\/([^/]+)$/);
+    if (publicAgentMatch && method === 'GET') {
+      const agent = findPublicAgent(state, publicAgentMatch[1], url.searchParams.get('key'));
+      if (agent === 'forbidden') return json({ error: 'forbidden' }, 403);
+      if (!agent) return json({ error: 'not_found' }, 404);
+      return json({
+        ok: true,
+        demoMode: true,
+        agent: {
+          ...summarizeAgent(agent),
+          stats: publicStats(agent),
+        },
+      });
+    }
+
+    const publicChatMatch = path.match(/^\/api\/public\/agent\/([^/]+)\/chat$/);
+    if (publicChatMatch && method === 'POST') {
+      const agent = findPublicAgent(state, publicChatMatch[1], url.searchParams.get('key'));
+      if (agent === 'forbidden') return json({ error: 'forbidden' }, 403);
+      if (!agent) return json({ error: 'not_found' }, 404);
+      const message = String(body.message || '').trim();
+      if (!message) return json({ error: 'invalid_input' }, 400);
+      const convo = ensurePublicConversation(agent, body.visitorId);
+      const reply = buildPublicReply(agent, message);
+      convo.messages.push({ role: 'user', content: message, createdAt: nowIso() });
+      convo.messages.push({ role: 'assistant', content: reply, createdAt: nowIso() });
+      convo.updatedAt = nowIso();
+      agent.updatedAt = nowIso();
+      writeState(state);
+      return json({ ok: true, demoMode: true, response: reply, stats: publicStats(agent) });
+    }
+
+    const publicFeedbackMatch = path.match(/^\/api\/public\/agent\/([^/]+)\/feedback$/);
+    if (publicFeedbackMatch && method === 'POST') {
+      const agent = findPublicAgent(state, publicFeedbackMatch[1], url.searchParams.get('key'));
+      if (agent === 'forbidden') return json({ error: 'forbidden' }, 403);
+      if (!agent) return json({ error: 'not_found' }, 404);
+      const rating = body.rating === 'bad' ? 'bad' : 'good';
+      agent.learningProfile = {
+        ...defaultLearningProfile(),
+        ...(agent.learningProfile || {}),
+        feedback: [
+          {
+            type: 'feedback',
+            rating,
+            prompt: String(body.message || '').slice(0, 200),
+            reply: String(body.reply || '').slice(0, 200),
+            at: nowIso(),
+          },
+          ...((agent.learningProfile?.feedback || []).slice(0, 19)),
+        ],
+        updatedAt: nowIso(),
+      };
+      agent.updatedAt = nowIso();
+      writeState(state);
+      return json({ ok: true, demoMode: true, rating });
+    }
+
     if (!user) return unauthorized();
 
     if (path === '/api/dashboard' && method === 'GET') return json(dashboardPayload(state, user));
@@ -501,6 +588,7 @@
         hiveRuns: [],
         shadowReviews: [],
         ownerConversation: [],
+        publicConversations: {},
         workspaceLearningProfile: workspace.learningProfile || defaultLearningProfile(),
         telegramTokenStored: false,
         schoolIds: [],
@@ -543,6 +631,7 @@
         hiveRuns: [],
         shadowReviews: [],
         ownerConversation: [],
+        publicConversations: {},
         workspaceLearningProfile: workspace.learningProfile || defaultLearningProfile(),
         telegramTokenStored: false,
         schoolIds: [],
