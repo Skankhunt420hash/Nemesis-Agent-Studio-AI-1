@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#667eea" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <title>OpenClaw Agent Studio</title>
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="wrap">
+    <div class="shell">
+      <div class="topbar">
+        <div class="brand">
+          <h1>OpenClaw Agent Studio</h1>
+          <p>Agenten bauen, füttern, trainieren, bearbeiten und per Telegram steuern.</p>
+        </div>
+        <div class="tabs">
+          <button class="tab active" data-tab="dashboard">Dashboard</button>
+          <button class="tab" data-tab="create">Agent bauen</button>
+          <button class="tab" data-tab="auth">Login / Register</button>
+        </div>
+      </div>
+
+      <div class="content">
+        <div id="status" class="notice">Lade…</div>
+
+        <section id="authTab" class="card loginbox hidden">
+          <h2>Account</h2>
+          <div class="split">
+            <form id="loginForm" class="form">
+              <h3>Login</h3>
+              <div class="field"><label>Email</label><input name="email" type="email" required></div>
+              <div class="field"><label>Password</label><input name="password" type="password" minlength="8" required></div>
+              <button class="btn" type="submit">Einloggen</button>
+            </form>
+            <form id="registerForm" class="form">
+              <h3>Register</h3>
+              <div class="field"><label>Name</label><input name="name" type="text" required></div>
+              <div class="field"><label>Email</label><input name="email" type="email" required></div>
+              <div class="field"><label>Password</label><input name="password" type="password" minlength="8" required></div>
+              <button class="btn secondary" type="submit">Account erstellen</button>
+            </form>
+          </div>
+        </section>
+
+        <section id="dashboardTab" class="grid">
+          <div class="card">
+            <h2>Dashboard</h2>
+            <div id="stats" class="stats"></div>
+            <div class="actions" style="margin-bottom:12px;">
+              <button id="refreshBtn" class="btn secondary">Aktualisieren</button>
+              <button id="logoutBtn" class="btn danger">Logout</button>
+            </div>
+            <div id="agentList" class="agents"></div>
+          </div>
+          <div class="card">
+            <h2>Workspace</h2>
+            <div id="workspaceList" class="list"></div>
+            <form id="workspaceForm" class="form" style="margin-top:14px;">
+              <div class="field"><label>Neuer Workspace</label><input name="name" placeholder="Team / Firma / Kunde" required></div>
+              <button class="btn secondary" type="submit">Workspace anlegen</button>
+            </form>
+            <div class="notice" style="margin-top:14px;">Teams kommen jetzt rein. Nächster Schritt: Mitglieder, Rollen, Einladungen.</div>
+          </div>
+          <div class="card">
+            <h2>Schools</h2>
+            <div id="schoolList" class="list"></div>
+            <form id="schoolForm" class="form" style="margin-top:14px;">
+              <div class="field"><label>Name</label><input name="name" placeholder="Prompt School" required></div>
+              <div class="field"><label>Fokus</label><input name="focus" placeholder="Role, memory, automation" required></div>
+              <div class="field"><label>Lektionen</label><textarea name="lessonText" placeholder="eine Lektion pro Zeile"></textarea></div>
+              <button class="btn secondary" type="submit">School anlegen</button>
+            </form>
+          </div>
+          <div class="card">
+            <h2>Router</h2>
+            <div class="notice">GPT-4.5 für Standard, Claude 4 fürs Coding, Free-Fallbacks wenn Quotas dicht machen.</div>
+            <form id="settingsForm" class="form" style="margin-top:14px;">
+              <div class="field"><label><input type="checkbox" name="routerEnabled" checked> Router aktiv</label></div>
+              <div class="field"><label>Hauptmodell</label><input name="mainModel" value="openai/gpt-4.5"></div>
+              <div class="field"><label>Coding-Modell</label><input name="codingModel" value="anthropic/claude-sonnet-4"></div>
+              <div class="field"><label>Fallbacks</label><textarea name="fallbackModels" placeholder="openrouter/auto, openrouter/google/gemini-3.1-flash-lite, deepseek/deepseek-v4-flash"></textarea></div>
+              <button class="btn secondary" type="submit">Router speichern</button>
+            </form>
+          </div>
+          <div class="card">
+            <h2>Vorhandene Telegram/OpenClaw-Agenten</h2>
+            <div class="notice">Hier kannst du bestehende Agenten ins Studio ziehen, statt neue Klone anzulegen.</div>
+            <div id="openclawRuntimeList" class="list" style="margin-top:14px;"></div>
+            <form id="importOpenClawForm" class="form" style="margin-top:14px;">
+              <div class="field"><label>Workspace</label><select name="workspaceId" id="importWorkspaceSelect"></select></div>
+              <div class="field"><label>Vorhandener Agent</label><select name="runtimeAgentId" id="importRuntimeAgentId" required></select></div>
+              <div class="field"><label>Telegram Account ID (optional override)</label><input name="telegramAccountId" placeholder="z.B. groq-agent"></div>
+              <div class="field"><label>Bot Name (optional override)</label><input name="telegramBotName" placeholder="z.B. Groq Agent"></div>
+              <button class="btn secondary" type="submit">Vorhandenen Agenten importieren</button>
+            </form>
+          </div>
+        </section>
+
+        <section id="createTab" class="card hidden" style="margin-top:20px;">
+          <h2>Neuen Agenten erstellen</h2>
+          <form id="agentForm" class="form">
+            <div class="field"><label>Workspace</label><select name="workspaceId" id="workspaceSelect"></select></div>
+            <div class="row">
+              <div class="field"><label>Name</label><input name="name" required></div>
+              <div class="field"><label>Business Typ</label><input name="businessType" placeholder="restaurant, ecommerce, ..." required></div>
+            </div>
+            <div class="field"><label>App-Idee</label><textarea name="appIdea" placeholder="Was soll die App tun?" required></textarea></div>
+            <div class="field"><label>Template</label><select name="template"><option value="saas">SaaS</option><option value="marketplace">Marketplace</option><option value="booking">Booking</option><option value="ai-tool">AI Tool</option><option value="crm">CRM</option></select></div>
+            <div class="field"><label>Beschreibung</label><textarea name="description" required></textarea></div>
+            <div class="row">
+              <div class="field"><label>Tonalität</label><input name="tone" value="professional" required></div>
+              <div class="field"><label>Persönlichkeit</label><input name="personality" value="helpful" required></div>
+            </div>
+            <div class="row">
+              <div class="field"><label>Sprache</label><input name="language" value="de" required></div>
+              <div class="field"><label>Services</label><input name="services" placeholder="optional"></div>
+            </div>
+            <div class="field"><label>Regeln</label><textarea name="rules" placeholder="optional"></textarea></div>
+            <div class="row">
+              <div class="field"><label>Primary Color</label><input name="primaryColor" type="color" value="#667eea"></div>
+              <div class="field"><label>Secondary Color</label><input name="secondaryColor" type="color" value="#764ba2"></div>
+            </div>
+            <div class="field"><label>Integrations</label><input name="integrations" placeholder="telegram, whatsapp, email (comma separated)"></div>
+            <button class="btn" type="submit">Agent bauen</button>
+          </form>
+        </section>
+      </div>
+
+      <div class="footer">v2 • Persistenz • Workspaces • Login • Telegram • OpenClaw • Export als Nächstes</div>
+    </div>
+  </div>
+
+  <div id="dialog" class="dialog"><div class="panel" id="dialogPanel"></div></div>
+  <script src="/app.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,19 @@
+{
+  "name": "OpenClaw Agent Studio",
+  "short_name": "AgentStudio",
+  "description": "Agenten bauen, trainieren und steuern.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#667eea",
+  "theme_color": "#667eea",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

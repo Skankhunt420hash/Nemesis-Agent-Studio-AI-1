@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Scan me if you can</string>
+    <string name="title_activity_main">Scan me if you can</string>
+    <string name="package_name">ai.openclaw.agentstudio</string>
+    <string name="custom_url_scheme">ai.openclaw.agentstudio</string>
+</resources>

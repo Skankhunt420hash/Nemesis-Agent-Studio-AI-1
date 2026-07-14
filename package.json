@@ -1,0 +1,74 @@
+{
+  "name": "agent-generator-v2",
+  "version": "2.0.0",
+  "description": "AI Agent Generator - production-ready starter",
+  "homepage": "https://docs.openclaw.ai",
+  "main": "backend.js",
+  "scripts": {
+    "start": "node backend.js",
+    "dev": "NODE_ENV=development node backend.js",
+    "desktop:dev": "electron ./desktop-shell/main.js",
+    "desktop:check": "node --check desktop-shell/main.js && node --check desktop-shell/preload.js",
+    "desktop:build": "electron-builder --linux AppImage deb --dir",
+    "desktop:dist": "electron-builder --linux AppImage deb",
+    "mobile:sync": "cap sync android",
+    "mobile:open": "cap open android",
+    "mobile:add": "cap add android",
+    "mobile:build": "cd android && ./gradlew assembleDebug",
+    "mobile:build:release": "cd android && ./gradlew assembleRelease",
+    "mobile:build:aab": "cd android && ./gradlew bundleRelease",
+    "mobile:release": "node ./scripts/android-release.mjs",
+    "mobile:release:help": "node -e \"console.log('Example: npm run mobile:release -- --versionCode 2 --versionName 2.0.1 --appName \"Scan me if you can\" [--appId com.example.scanmeifyoucan]')\"",
+    "mobile:playstore:help": "node -e \"console.log('1) npm run mobile:release -- --versionCode 4 --versionName 2.0.3  2) upload the generated .aab from dist-mobile/ to Google Play Console')\"",
+    "test": "node --test",
+    "check": "node --check backend.js && node --check public/app.js && node --check public/agent.js && npm run desktop:check"
+  },
+  "keywords": [
+    "ai",
+    "agents",
+    "saas",
+    "claude",
+    "generator"
+  ],
+  "author": {
+    "name": "OpenClaw",
+    "email": "support@openclaw.ai"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.16.1",
+    "@capacitor/android": "^6.1.2",
+    "@capacitor/core": "^6.1.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2"
+  },
+  "build": {
+    "appId": "ai.openclaw.agentstudio",
+    "productName": "OpenClaw Agent Studio",
+    "linux": {
+      "category": "Development",
+      "maintainer": "OpenClaw <support@openclaw.ai>"
+    },
+    "directories": {
+      "output": "dist-desktop"
+    },
+    "files": [
+      "backend.js",
+      "public/**/*",
+      "desktop-shell/**/*",
+      "lib/**/*",
+      "package.json",
+      "node_modules/**/*"
+    ]
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6.1.2",
+    "electron": "^37.2.6",
+    "electron-builder": "^26.0.12",
+    "typescript": "^7.0.2"
+  }
+}

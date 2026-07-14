@@ -1,0 +1,23 @@
+node_modules/
+.env
+server.log
+*.log
+
+# local data / secrets
+keystore/
+android/keystore.properties
+android/local.properties
+data/db.json
+
+# build artifacts
+dist-desktop/
+dist-mobile/
+android/app/build/
+android/.gradle/
+
+# generated / temp
+generated/
+tmp-*.txt
+tmp-*.json
+build-status.json
+artifact-status.txt
