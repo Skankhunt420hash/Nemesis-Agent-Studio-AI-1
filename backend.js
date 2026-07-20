@@ -62,7 +62,9 @@ function buildAppBlueprint(input) {
   const features = new Set([
     'Login/Register',
     'Dashboard',
-    'Pricing / Monetization',
+    'CRUD workspace',
+    'Backend CRUD API',
+    'Release checklist',
   ]);
   if (/shop|store|ecom|shopify|produkt/.test(lower)) features.add('Product catalog');
   if (/booking|termin|appointment/.test(lower)) features.add('Booking flow');
@@ -70,16 +72,20 @@ function buildAppBlueprint(input) {
   if (/content|blog|seo/.test(lower)) features.add('CMS / content editor');
   if (/dashboard|analytics|report/.test(lower)) features.add('Analytics');
   if (/marketplace|market place/.test(lower)) features.add('Marketplace');
+  if (/notif|alert|reminder/.test(lower)) features.add('Notifications');
+  if (/search|find|filter/.test(lower)) features.add('Search');
+  if (/admin|approval|role|permission/.test(lower)) features.add('Admin approvals');
+  if (/billing|invoice|subscription|price|stripe/.test(lower)) features.add('Billing');
   return {
     title,
     template,
-    tagline: prompt || `${title} — built fast.`,
-    stack: ['Next.js', 'Supabase/Postgres', 'Stripe', 'OpenClaw agents'],
-    pages: ['Landing', 'Auth', 'Dashboard', 'Settings', 'Billing'],
+    tagline: prompt || `${title} — functional app slice, not just a landing page.`,
+    stack: ['Node', 'Runnable JSON API', 'Auth flow', 'Docker / Compose', 'OpenClaw agents'],
+    pages: ['Overview', 'Auth', 'Workspace', 'Records', 'Release'],
     features: [...features],
     monetization: ['Free trial', 'Monthly subscription'],
-    deploy: 'Vercel / Docker',
-    notes: 'Export this blueprint, then generate code files from it.',
+    deploy: 'Docker / Compose / Replit',
+    notes: 'Export this blueprint, then generate a functional app scaffold with backend contract, auth flow, and deploy defaults.',
   };
 }
 

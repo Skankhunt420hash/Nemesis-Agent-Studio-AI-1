@@ -193,7 +193,7 @@ async function openAgent(id) {
       <a class="btn" target="_blank" rel="noreferrer" href="${demoHref(a.publicUrl, demoMode)}" ${demoMode ? 'data-demo-disabled="1"' : ''}>Public Chat</a>
       <a class="btn secondary" target="_blank" rel="noreferrer" href="${demoHref(a.hostedUrl, demoMode)}" ${demoMode ? 'data-demo-disabled="1"' : ''}>Hosted App</a>
       <a class="btn secondary" href="${demoMode ? '#' : `/api/agents/${a.id}/export?format=md`}" target="_blank" rel="noreferrer" ${demoMode ? 'data-demo-disabled="1"' : ''}>Export MD</a>
-      <button class="btn secondary" data-gen="${a.id}" ${demoDisabledAttr(demoMode)}>Generate Code</button>
+      <button class="btn secondary" data-gen="${a.id}" ${demoDisabledAttr(demoMode)}>Generate Functional App</button>
       <button class="btn secondary" data-train="${a.id}" ${demoDisabledAttr(demoMode)}>Train</button>
       <button class="btn secondary" data-fine-tune-run="${a.id}" ${demoDisabledAttr(demoMode)}>Fine-Tune Job</button>
       <button class="btn secondary" data-fine-tune-export="${a.id}" ${demoDisabledAttr(demoMode)}>Dataset Export</button>
@@ -500,7 +500,7 @@ async function init() {
     if (hosted) navigator.clipboard.writeText(hosted);
     if (gen) {
       const out = await api(`/api/agents/${gen}/generate`, { method: 'POST', body: '{}' });
-      alert(`Generated: ${out.outputDir}`);
+      alert(`Functional app generated: ${out.outputDir}`);
     }
     if (train) {
       await api(`/api/agents/${train}/train`, { method: 'POST', body: '{}' });
