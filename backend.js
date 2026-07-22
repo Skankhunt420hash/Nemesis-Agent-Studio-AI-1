@@ -5,11 +5,18 @@ const path = require('path');
 const crypto = require('crypto');
 const fs = require('fs');
 const { spawnSync } = require('child_process');
-const { loadDb, mutate } = require('./lib/store');
+const { loadDb, saveDb, mutate } = require('./lib/store');
 const { hashPassword, verifyPassword, createToken, tokenHash, parseCookies, buildCookie, clearCookie } = require('./lib/auth');
 const { generateSystemPrompt, generateReply, generateTrainingDigest } = require('./lib/llm');
 const { buildHostedAppScaffold } = require('./lib/scaffold');
 const { buildOpenClawAgentBundle, buildDeploymentDirectory } = require('./lib/openclaw');
+const { runAgentChat } = require('./lib/runtime/agent-runtime');
+const toolRunner = require('./lib/runtime/tool-runner');
+const { applyBrainReflection, ensureAvatarState } = require('./lib/runtime/brain-runtime');
+const { ensureAvatarAsset } = require('./lib/runtime/avatar-runtime');
+const { executeAgencyAction } = require('./lib/runtime/agency-runtime');
+const automationEngine = require('./lib/automations/automation-engine');
+const agentModel = require('./lib/agent-model');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -62,9 +69,7 @@ function buildAppBlueprint(input) {
   const features = new Set([
     'Login/Register',
     'Dashboard',
-    'CRUD workspace',
-    'Backend CRUD API',
-    'Release checklist',
+    'Pricing / Monetization',
   ]);
   if (/shop|store|ecom|shopify|produkt/.test(lower)) features.add('Product catalog');
   if (/booking|termin|appointment/.test(lower)) features.add('Booking flow');
@@ -72,20 +77,16 @@ function buildAppBlueprint(input) {
   if (/content|blog|seo/.test(lower)) features.add('CMS / content editor');
   if (/dashboard|analytics|report/.test(lower)) features.add('Analytics');
   if (/marketplace|market place/.test(lower)) features.add('Marketplace');
-  if (/notif|alert|reminder/.test(lower)) features.add('Notifications');
-  if (/search|find|filter/.test(lower)) features.add('Search');
-  if (/admin|approval|role|permission/.test(lower)) features.add('Admin approvals');
-  if (/billing|invoice|subscription|price|stripe/.test(lower)) features.add('Billing');
   return {
     title,
     template,
-    tagline: prompt || `${title} — functional app slice, not just a landing page.`,
-    stack: ['Node', 'Runnable JSON API', 'Auth flow', 'Docker / Compose', 'OpenClaw agents'],
-    pages: ['Overview', 'Auth', 'Workspace', 'Records', 'Release'],
+    tagline: prompt || `${title} — built fast.`,
+    stack: ['Next.js', 'Supabase/Postgres', 'Stripe', 'OpenClaw agents'],
+    pages: ['Landing', 'Auth', 'Dashboard', 'Settings', 'Billing'],
     features: [...features],
     monetization: ['Free trial', 'Monthly subscription'],
-    deploy: 'Docker / Compose / Replit',
-    notes: 'Export this blueprint, then generate a functional app scaffold with backend contract, auth flow, and deploy defaults.',
+    deploy: 'Vercel / Docker',
+    notes: 'Export this blueprint, then generate code files from it.',
   };
 }
 
@@ -97,6 +98,32 @@ function defaultAutomation() {
     openclawAgentId: '',
     readyWebhookUrl: '',
   };
+}
+
+function ensureBrainAutomation(db, agent, mode = 'cron') {
+  const brain = agentModel.normalizeBrainConfig(agent?.brainConfig);
+  if (!brain.enabled) return null;
+  const existing = db.automations.find((item) => item.agentId === agent.id && item.systemTag === 'brain_reflection');
+  if (existing) return existing;
+  const automation = automationEngine.normalizeAutomationRecord({
+    agentId: agent.id,
+    name: 'Brain Reflection Loop',
+    enabled: true,
+    systemTag: 'brain_reflection',
+    trigger: mode === 'manual'
+      ? { type: 'manual' }
+      : { type: 'cron', cron: '0 */6 * * *' },
+    steps: [
+      {
+        type: 'run_agent',
+        input: 'Reflektiere über deine letzten Aktionen, verdichte was du gelernt hast und verbessere deinen Charakter ohne das Ziel zu verlieren.',
+      },
+    ],
+    createdAt: nowIso(),
+    updatedAt: nowIso(),
+  }, { uid, nowIso, agentId: agent.id });
+  db.automations.push(automation);
+  return automation;
 }
 
 function defaultSchools() {
@@ -1299,6 +1326,152 @@ function telegramTokenExists(agent) {
   }
 }
 
+function buildChannelStatus(agent) {
+  const channelConfig = agentModel.normalizeChannelConfig(agent.channelConfig);
+  const automation = normalizeAutomation(agent.automation);
+  const runtimeInfo = runtimeInfoForAgent(agent);
+  const telegramTokenStored = telegramTokenExists(agent);
+  const telegramRuntimeReady = Boolean(runtimeInfo?.ok && automation.openclawAgentId);
+  return {
+    telegram: {
+      enabled: channelConfig.telegram.enabled || automation.enabled,
+      accountId: channelConfig.telegram.accountId || automation.telegramAccountId || '',
+      botName: channelConfig.telegram.botName || automation.telegramBotName || '',
+      testChatId: channelConfig.telegram.testChatId || '',
+      tokenStored: telegramTokenStored,
+      runtimeAgentId: automation.openclawAgentId || '',
+      runtimeReady: telegramRuntimeReady,
+      ready: Boolean((channelConfig.telegram.enabled || automation.enabled) && telegramTokenStored && (automation.telegramAccountId || channelConfig.telegram.accountId) && telegramRuntimeReady),
+      error: runtimeInfo && !runtimeInfo.ok ? runtimeInfo.error : '',
+    },
+    whatsapp: {
+      enabled: channelConfig.whatsapp.enabled,
+      target: channelConfig.whatsapp.target,
+      accountId: channelConfig.whatsapp.accountId,
+      webhookUrl: channelConfig.whatsapp.webhookUrl || String(process.env.OPENCLAW_WHATSAPP_TEST_WEBHOOK || '').trim(),
+      ready: Boolean(channelConfig.whatsapp.enabled && channelConfig.whatsapp.target && channelConfig.whatsapp.accountId && (channelConfig.whatsapp.webhookUrl || String(process.env.OPENCLAW_WHATSAPP_TEST_WEBHOOK || '').trim())),
+      note: channelConfig.whatsapp.enabled
+        ? ((channelConfig.whatsapp.target && channelConfig.whatsapp.accountId && (channelConfig.whatsapp.webhookUrl || String(process.env.OPENCLAW_WHATSAPP_TEST_WEBHOOK || '').trim())) ? 'Bridge konfiguriert.' : 'Bridge vorbereitet, aber Ziel/Account/Webhook fehlt noch.')
+        : 'Nicht aktiviert.',
+    },
+    openclaw: {
+      agentId: automation.openclawAgentId || '',
+      exists: runtimeInfo?.ok === true,
+      error: runtimeInfo && !runtimeInfo.ok ? runtimeInfo.error : '',
+    },
+  };
+}
+
+async function sendTelegramTestMessage(agent, message) {
+  const channelConfig = agentModel.normalizeChannelConfig(agent.channelConfig);
+  const tokenFile = telegramTokenFileFor(agent);
+  const token = readTextFileSafe(tokenFile, '').trim();
+  const chatId = String(channelConfig.telegram.testChatId || '').trim();
+  if (!token) return { ok: false, error: 'telegram_token_missing' };
+  if (!chatId) return { ok: false, error: 'telegram_chat_id_missing' };
+  const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chat_id: chatId, text: String(message || '').trim() || 'Telegram Live-Test aus Agent Studio.' }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data?.ok === false) return { ok: false, error: data?.description || `telegram_http_${response.status}`, response: data };
+  return {
+    ok: true,
+    provider: 'telegram-bot-api',
+    messageId: data?.result?.message_id || null,
+    chatId,
+    response: data,
+  };
+}
+
+async function sendWhatsAppBridgeMessage(agent, message) {
+  const channelConfig = agentModel.normalizeChannelConfig(agent.channelConfig);
+  const webhookUrl = String(channelConfig.whatsapp.webhookUrl || process.env.OPENCLAW_WHATSAPP_TEST_WEBHOOK || '').trim();
+  const target = String(channelConfig.whatsapp.target || '').trim();
+  const accountId = String(channelConfig.whatsapp.accountId || '').trim();
+  if (!webhookUrl) return { ok: false, error: 'whatsapp_webhook_missing' };
+  if (!target) return { ok: false, error: 'whatsapp_target_missing' };
+  if (!accountId) return { ok: false, error: 'whatsapp_account_missing' };
+  const payload = { target, accountId, message: String(message || '').trim() || 'WhatsApp Bridge-Test aus Agent Studio.', agentId: agent.id, agentName: agent.name };
+  const response = await fetch(webhookUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const text = await response.text();
+  if (!response.ok) return { ok: false, error: `whatsapp_http_${response.status}`, responseText: text.slice(0, 2000) };
+  return {
+    ok: true,
+    provider: 'whatsapp-webhook-bridge',
+    target,
+    accountId,
+    responseText: text.slice(0, 2000),
+  };
+}
+
+function syncAgentFromRuntime(agent, snapshot, db) {
+  if (!snapshot?.ok) return snapshot || { ok: false, error: 'runtime_sync_failed' };
+  const runtime = snapshot.runtime || {};
+  const studioMeta = snapshot.studioMeta || {};
+  const nextModelStack = studioMeta.modelStack || { mainModel: snapshot.models?.providers?.default?.model || agent.modelStack?.mainModel || db.settings?.mainModel };
+  agent.modelStack = normalizeModelStack({ ...(agent.modelStack || {}), ...nextModelStack }, db.settings);
+  agent.automation = normalizeAutomation({
+    ...(agent.automation || {}),
+    ...(studioMeta.automation || {}),
+    openclawAgentId: studioMeta.openclawAgentId || agent.automation?.openclawAgentId || runtime.id || '',
+    telegramAccountId: studioMeta.automation?.telegramAccountId || agent.automation?.telegramAccountId || runtime.id || '',
+    telegramBotName: studioMeta.automation?.telegramBotName || agent.automation?.telegramBotName || runtime.name || runtime.id || '',
+  });
+  if (!String(agent.name || '').trim() && runtime.name) agent.name = String(runtime.name).trim();
+  agent.importedFromRuntime = {
+    ...(agent.importedFromRuntime || {}),
+    agentId: runtime.id || '',
+    workspace: runtime.workspace || '',
+    model: runtime.model || '',
+    syncedAt: nowIso(),
+  };
+  agent.updatedAt = nowIso();
+  return {
+    ok: true,
+    runtime,
+    studioMeta,
+    models: snapshot.models || {},
+    files: snapshot.files || {},
+    syncedAt: nowIso(),
+  };
+}
+
+function inferRunChannel(run = {}) {
+  if (run.channel) return String(run.channel);
+  const source = String(run.source || run.kind || '').toLowerCase();
+  if (source.includes('telegram')) return 'telegram';
+  if (source.includes('whatsapp')) return 'whatsapp';
+  if (source.includes('public')) return 'public';
+  if (source.includes('owner')) return 'owner';
+  if (source.includes('automation') || source.includes('cron') || source.includes('webhook')) return 'automation';
+  return 'other';
+}
+
+function decorateRunLog(run = {}) {
+  const channel = inferRunChannel(run);
+  return {
+    ...run,
+    channel,
+    preview: String(run.output?.reply || run.reply || run.summary || '').trim(),
+  };
+}
+
+function listAgentRunLogs(db, agentId, filter = 'all', limit = 20) {
+  const wanted = String(filter || 'all').trim().toLowerCase();
+  return (db.runLogs || [])
+    .filter((run) => run.agentId === agentId)
+    .map(decorateRunLog)
+    .filter((run) => wanted === 'all' ? true : run.channel === wanted)
+    .slice(-Math.max(1, Math.min(200, Number(limit) || 20)))
+    .reverse();
+}
+
 function getIp(req) {
   const xf = req.headers['x-forwarded-for'];
   return String(xf ? xf.split(',')[0].trim() : req.socket.remoteAddress || 'unknown');
@@ -1334,9 +1507,41 @@ function getSession(req) {
   return { session, user };
 }
 
+function ensureSoloAuth(req, res) {
+  const existing = getSession(req);
+  if (existing) return existing;
+
+  const db = loadDb();
+  let user = db.users[0];
+  if (!user) {
+    user = {
+      id: uid('usr_'),
+      name: 'Elija',
+      email: 'owner@nemesis.local',
+      passwordHash: hashPassword(createToken()),
+      plan: 'owner',
+      createdAt: nowIso(),
+    };
+    db.users.push(user);
+  }
+
+  ensureDefaultWorkspace(db, user);
+  const token = createToken();
+  const session = {
+    id: uid('ses_'),
+    userId: user.id,
+    tokenHash: tokenHash(token),
+    createdAt: nowIso(),
+    expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 365).toISOString(),
+  };
+  db.sessions.push(session);
+  saveDb(db);
+  if (res) res.setHeader('Set-Cookie', buildCookie(token, 60 * 60 * 24 * 365));
+  return { session, user };
+}
+
 function requireAuth(req, res, next) {
-  const auth = getSession(req);
-  if (!auth) return res.status(401).json({ error: 'unauthorized' });
+  const auth = ensureSoloAuth(req, res);
   req.auth = auth;
   next();
 }
@@ -1384,10 +1589,22 @@ function publicAgentView(agent, db) {
     slug: agent.slug,
     name: agent.name,
     description: agent.description,
+    goal: String(agent.goal || agent.description || '').trim(),
+    persona: String(agent.persona || [agent.tone, agent.personality].filter(Boolean).join(', ')).trim(),
     businessType: agent.businessType,
     tone: agent.tone,
     personality: agent.personality,
     language: agent.language,
+    tools: agentModel.normalizeToolList(agent.tools),
+    memoryConfig: agentModel.normalizeMemoryConfig(agent.memoryConfig),
+    deployConfig: agentModel.normalizeDeployConfig(agent.deployConfig),
+    channelConfig: agentModel.normalizeChannelConfig(agent.channelConfig),
+    agencyConfig: agentModel.normalizeAgencyConfig(agent.agencyConfig),
+    brainConfig: agentModel.normalizeBrainConfig(agent.brainConfig),
+    lifecycleConfig: agentModel.normalizeLifecycleConfig(agent.lifecycleConfig),
+    brainState: agent.brainState || null,
+    avatarState: ensureAvatarState(agent, nowIso),
+    reflections: Array.isArray(agent.reflections) ? agent.reflections.slice(0, 12) : [],
     workspaceId: agent.workspaceId,
     theme: agent.theme,
     publicKey: agent.publicKey,
@@ -1445,8 +1662,8 @@ app.get('/hosted/:slug', (req, res) => {
 });
 
 app.get('/api/me', (req, res) => {
-  const auth = getSession(req);
-  res.json({ user: auth ? { id: auth.user.id, name: auth.user.name, email: auth.user.email, plan: auth.user.plan } : null });
+  const auth = ensureSoloAuth(req, res);
+  res.json({ user: auth ? { id: auth.user.id, name: auth.user.name, email: auth.user.email, plan: auth.user.plan } : null, singleUserMode: true });
 });
 
 app.post('/api/auth/register', async (req, res) => {
@@ -1572,9 +1789,20 @@ app.get('/api/dashboard', requireAuth, (req, res) => {
       slug: a.slug,
       name: a.name,
       description: a.description,
+      goal: String(a.goal || a.description || '').trim(),
+      persona: String(a.persona || [a.tone, a.personality].filter(Boolean).join(', ')).trim(),
       language: a.language,
       businessType: a.businessType,
       tone: a.tone,
+      tools: agentModel.normalizeToolList(a.tools),
+      memoryConfig: agentModel.normalizeMemoryConfig(a.memoryConfig),
+      deployConfig: agentModel.normalizeDeployConfig(a.deployConfig),
+      channelConfig: agentModel.normalizeChannelConfig(a.channelConfig),
+      agencyConfig: agentModel.normalizeAgencyConfig(a.agencyConfig),
+      brainConfig: agentModel.normalizeBrainConfig(a.brainConfig),
+      lifecycleConfig: agentModel.normalizeLifecycleConfig(a.lifecycleConfig),
+      brainState: a.brainState || null,
+      avatarState: ensureAvatarState(a, nowIso),
       status: a.status,
       workspaceId: a.workspaceId,
       workspaceName: (db.workspaces.find((w) => w.id === a.workspaceId) || {}).name || 'Workspace',
@@ -1606,6 +1834,10 @@ app.get('/api/openclaw/agents', requireAuth, (req, res) => {
   res.json({ ok: true, agents: runtime.agents });
 });
 
+app.get('/api/tools/catalog', requireAuth, (req, res) => {
+  res.json({ ok: true, tools: toolRunner.catalog() });
+});
+
 app.put('/api/settings', requireAuth, async (req, res) => {
   const updated = await mutate((db) => {
     db.settings = normalizeSettings({ ...(db.settings || {}), ...(req.body || {}) });
@@ -1634,6 +1866,8 @@ app.post('/api/agents', requireAuth, async (req, res) => {
     }
 
     const publicKey = uid('pub_');
+    const goal = agentModel.buildGoal(body);
+    const persona = agentModel.buildPersona(body);
     const systemPrompt = await generateSystemPrompt({
       name,
       description: String(body.description).trim(),
@@ -1656,6 +1890,8 @@ app.post('/api/agents', requireAuth, async (req, res) => {
       blueprint: buildAppBlueprint({ name, prompt: String(body.appIdea || body.description || '').trim(), template: body.template }),
       slug,
       description: String(body.description).trim(),
+      goal,
+      persona,
       businessType: String(body.businessType).trim(),
       tone: String(body.tone).trim(),
       personality: String(body.personality).trim(),
@@ -1663,6 +1899,16 @@ app.post('/api/agents', requireAuth, async (req, res) => {
       services: String(body.services || '').trim(),
       rules: String(body.rules || '').trim(),
       integrations: Array.isArray(body.integrations) ? body.integrations : [],
+      tools: agentModel.normalizeToolList(body.tools || body.enabledTools || ['generate_hosted_app', 'export_openclaw_bundle', 'telegram_channel', 'whatsapp_channel']),
+      memoryConfig: agentModel.normalizeMemoryConfig(body.memoryConfig),
+      deployConfig: agentModel.normalizeDeployConfig(body.deployConfig),
+      channelConfig: agentModel.normalizeChannelConfig(body.channelConfig),
+      agencyConfig: agentModel.normalizeAgencyConfig(body.agencyConfig),
+      brainConfig: agentModel.normalizeBrainConfig(body.brainConfig),
+      lifecycleConfig: agentModel.normalizeLifecycleConfig({ ...(body.lifecycleConfig || {}), birthAt: nowIso() }),
+      brainState: null,
+      avatarState: { mode: body.brainConfig?.avatarMode || 'manual', currentPrompt: '', look: 'clean digital operator', accent: 'violet neon', updatedAt: nowIso() },
+      reflections: [],
       knowledgeItems: [],
       automation: defaultAutomation(),
       modelStack: normalizeModelStack(body.modelStack, db.settings),
@@ -1681,12 +1927,14 @@ app.post('/api/agents', requireAuth, async (req, res) => {
       createdAt: nowIso(),
       updatedAt: nowIso(),
     };
+    ensureAvatarAsset(record, GENERATED_DIR);
     db.agents.push(record);
+    if (agentModel.normalizeBrainConfig(record.brainConfig).enabled) ensureBrainAutomation(db, record);
     return record;
   });
 
   if (!agent) return res.status(400).json({ error: 'invalid_workspace' });
-  res.json({ ok: true, agent: { ...agent, modelStack: normalizeModelStack(agent.modelStack, db.settings), fineTuneProfile: normalizeFineTuneProfile(agent.fineTuneProfile), hiveMindConfig: normalizeHiveMindConfig(agent.hiveMindConfig), learningProfile: normalizeLearningProfile(agent.learningProfile), publicUrl: `/agent/${agent.slug}?key=${agent.publicKey}` } });
+  res.json({ ok: true, agent: { ...agent, goal: String(agent.goal || agent.description || '').trim(), persona: String(agent.persona || [agent.tone, agent.personality].filter(Boolean).join(', ')).trim(), tools: agentModel.normalizeToolList(agent.tools), memoryConfig: agentModel.normalizeMemoryConfig(agent.memoryConfig), deployConfig: agentModel.normalizeDeployConfig(agent.deployConfig), channelConfig: agentModel.normalizeChannelConfig(agent.channelConfig), brainConfig: agentModel.normalizeBrainConfig(agent.brainConfig), lifecycleConfig: agentModel.normalizeLifecycleConfig(agent.lifecycleConfig), brainState: agent.brainState || null, avatarState: ensureAvatarState(agent, nowIso), reflections: Array.isArray(agent.reflections) ? agent.reflections.slice(0, 12) : [], modelStack: normalizeModelStack(agent.modelStack, db.settings), fineTuneProfile: normalizeFineTuneProfile(agent.fineTuneProfile), hiveMindConfig: normalizeHiveMindConfig(agent.hiveMindConfig), learningProfile: normalizeLearningProfile(agent.learningProfile), publicUrl: `/agent/${agent.slug}?key=${agent.publicKey}` } });
 });
 
 app.post('/api/agents/import-openclaw', requireAuth, async (req, res) => {
@@ -1740,6 +1988,8 @@ app.post('/api/agents/import-openclaw', requireAuth, async (req, res) => {
       blueprint: buildAppBlueprint({ name, prompt: description, template: 'existing-agent' }),
       slug,
       description,
+      goal: description,
+      persona: 'direct, helpful',
       businessType: 'existing-openclaw-agent',
       tone: 'direct',
       personality: 'helpful',
@@ -1747,6 +1997,16 @@ app.post('/api/agents/import-openclaw', requireAuth, async (req, res) => {
       services: `Runtime Agent ID: ${runtimeAgent.id}`,
       rules: 'Bestehende Bindings nicht kaputt machen. Änderungen zuerst im Studio spiegeln.',
       integrations: ['telegram', 'openclaw'],
+      tools: agentModel.normalizeToolList(['generate_hosted_app', 'export_openclaw_bundle', 'telegram_channel', 'whatsapp_channel']),
+      memoryConfig: agentModel.defaultMemoryConfig(),
+      deployConfig: agentModel.normalizeDeployConfig({ app: true, telegram: true, openclaw: true }),
+      channelConfig: agentModel.normalizeChannelConfig({ telegram: { enabled: true, accountId: telegramAccountId, botName: telegramBotName } }),
+      agencyConfig: agentModel.normalizeAgencyConfig({ mode: 'builder', allowedPaths: [path.join(__dirname, 'generated'), path.join(__dirname, 'exports')] }),
+      brainConfig: agentModel.normalizeBrainConfig({ enabled: true, ownCharacter: true, selfLearning: true }),
+      lifecycleConfig: agentModel.normalizeLifecycleConfig({ enabled: true, stage: 'imported', birthAt: nowIso() }),
+      brainState: null,
+      avatarState: { mode: 'assisted', currentPrompt: '', look: 'clean digital operator', accent: 'violet neon', updatedAt: nowIso() },
+      reflections: [],
       knowledgeItems: [normalizeKnowledgeItem({
         title: 'Import-Hinweis',
         content: `Dieser Agent wurde aus dem bestehenden OpenClaw-Agenten ${runtimeAgent.id} importiert. Modell: ${runtimeAgent.model || 'unbekannt'}.`,
@@ -1778,13 +2038,15 @@ app.post('/api/agents/import-openclaw', requireAuth, async (req, res) => {
       createdAt: nowIso(),
       updatedAt: nowIso(),
     };
+    ensureAvatarAsset(record, GENERATED_DIR);
     db.agents.push(record);
+    if (agentModel.normalizeBrainConfig(record.brainConfig).enabled) ensureBrainAutomation(db, record);
     return { created: record };
   });
 
   if (result?.error === 'invalid_workspace') return res.status(400).json({ error: 'invalid_workspace' });
   if (result?.existing) return res.json({ ok: true, imported: false, agent: result.existing, message: 'Agent war bereits importiert.' });
-  res.json({ ok: true, imported: true, agent: result.created });
+  res.json({ ok: true, imported: true, agent: { ...result.created, goal: String(result.created.goal || result.created.description || '').trim(), persona: String(result.created.persona || [result.created.tone, result.created.personality].filter(Boolean).join(', ')).trim(), tools: agentModel.normalizeToolList(result.created.tools), memoryConfig: agentModel.normalizeMemoryConfig(result.created.memoryConfig), deployConfig: agentModel.normalizeDeployConfig(result.created.deployConfig), channelConfig: agentModel.normalizeChannelConfig(result.created.channelConfig), brainConfig: agentModel.normalizeBrainConfig(result.created.brainConfig), lifecycleConfig: agentModel.normalizeLifecycleConfig(result.created.lifecycleConfig), brainState: result.created.brainState || null, avatarState: ensureAvatarState(result.created, nowIso), reflections: Array.isArray(result.created.reflections) ? result.created.reflections.slice(0, 12) : [] } });
 });
 
 app.get('/api/agents/:id', requireAuth, (req, res) => {
@@ -1792,7 +2054,9 @@ app.get('/api/agents/:id', requireAuth, (req, res) => {
   const agent = db.agents.find((a) => a.id === req.params.id);
   if (!agent || !requireOwner(agent, req.auth.user.id)) return res.status(404).json({ error: 'not_found' });
   const conversation = ownerConversationForAgent(db, agent.id, req.auth.user.id);
-  res.json({ ok: true, agent: { ...agent, modelStack: normalizeModelStack(agent.modelStack, db.settings), fineTuneProfile: normalizeFineTuneProfile(agent.fineTuneProfile), hiveMindConfig: normalizeHiveMindConfig(agent.hiveMindConfig), learningProfile: normalizeLearningProfile(agent.learningProfile), workspaceLearningProfile: normalizeLearningProfile(workspaceForAgent(db, agent)?.learningProfile), publicUrl: `/agent/${agent.slug}?key=${agent.publicKey}`, hostedUrl: hostedUrlFor(agent) }, conversation, fineTuneJobs: db.fineTuneJobs.filter((job) => job.agentId === agent.id).slice(-10).reverse(), hiveRuns: db.hiveRuns.filter((run) => run.agentId === agent.id).slice(-10).reverse(), shadowReviews: db.shadowReviews.filter((review) => review.agentId === agent.id).slice(-12).reverse() });
+  const runtimeInfo = runtimeInfoForAgent(agent);
+  const runtimeSnapshot = runtimeInfo?.ok ? readRuntimeAgentSnapshot(agent) : null;
+  res.json({ ok: true, agent: { ...agent, goal: String(agent.goal || agent.description || '').trim(), persona: String(agent.persona || [agent.tone, agent.personality].filter(Boolean).join(', ')).trim(), tools: agentModel.normalizeToolList(agent.tools), memoryConfig: agentModel.normalizeMemoryConfig(agent.memoryConfig), deployConfig: agentModel.normalizeDeployConfig(agent.deployConfig), channelConfig: agentModel.normalizeChannelConfig(agent.channelConfig), brainConfig: agentModel.normalizeBrainConfig(agent.brainConfig), lifecycleConfig: agentModel.normalizeLifecycleConfig(agent.lifecycleConfig), brainState: agent.brainState || null, avatarState: ensureAvatarState(agent, nowIso), reflections: Array.isArray(agent.reflections) ? agent.reflections.slice(0, 12) : [], modelStack: normalizeModelStack(agent.modelStack, db.settings), fineTuneProfile: normalizeFineTuneProfile(agent.fineTuneProfile), hiveMindConfig: normalizeHiveMindConfig(agent.hiveMindConfig), learningProfile: normalizeLearningProfile(agent.learningProfile), workspaceLearningProfile: normalizeLearningProfile(workspaceForAgent(db, agent)?.learningProfile), publicUrl: `/agent/${agent.slug}?key=${agent.publicKey}`, hostedUrl: hostedUrlFor(agent) }, conversation, fineTuneJobs: db.fineTuneJobs.filter((job) => job.agentId === agent.id).slice(-10).reverse(), hiveRuns: db.hiveRuns.filter((run) => run.agentId === agent.id).slice(-10).reverse(), shadowReviews: db.shadowReviews.filter((review) => review.agentId === agent.id).slice(-12).reverse(), runLogs: db.runLogs.filter((run) => run.agentId === agent.id).slice(-20).reverse(), automations: db.automations.filter((item) => item.agentId === agent.id).slice(-20).reverse(), approvals: (db.approvals || []).filter((item) => item.agentId === agent.id).slice(0, 20), audit: (db.audit || []).filter((item) => item.agentId === agent.id).slice(0, 40), channelStatus: buildChannelStatus(agent), runtimeInfo, runtimeSnapshot: runtimeSnapshot?.ok ? runtimeSnapshot : null });
 });
 
 app.patch('/api/agents/:id', requireAuth, async (req, res) => {
@@ -1800,7 +2064,7 @@ app.patch('/api/agents/:id', requireAuth, async (req, res) => {
   const updated = await mutate((db) => {
     const agent = db.agents.find((a) => a.id === req.params.id);
     if (!agent || !requireOwner(agent, req.auth.user.id)) return null;
-    const fields = ['name', 'description', 'businessType', 'tone', 'personality', 'language', 'services', 'rules', 'appIdea', 'template', 'trainingNotes'];
+    const fields = ['name', 'description', 'goal', 'persona', 'businessType', 'tone', 'personality', 'language', 'services', 'rules', 'appIdea', 'template', 'trainingNotes'];
     for (const field of fields) {
       if (body[field] !== undefined) agent[field] = String(body[field]).trim();
     }
@@ -1808,6 +2072,13 @@ app.patch('/api/agents/:id', requireAuth, async (req, res) => {
       agent.blueprint = buildAppBlueprint({ name: body.name || agent.name, prompt: body.appIdea || body.description || agent.appIdea || agent.description, template: body.template || agent.template || 'saas' });
     }
     if (Array.isArray(body.integrations)) agent.integrations = body.integrations;
+    if (body.tools !== undefined || body.enabledTools !== undefined) agent.tools = agentModel.normalizeToolList(body.tools || body.enabledTools);
+    if (body.memoryConfig !== undefined) agent.memoryConfig = agentModel.normalizeMemoryConfig(body.memoryConfig);
+    if (body.deployConfig !== undefined) agent.deployConfig = agentModel.normalizeDeployConfig(body.deployConfig);
+    if (body.channelConfig !== undefined) agent.channelConfig = agentModel.normalizeChannelConfig(body.channelConfig);
+    if (body.agencyConfig !== undefined) agent.agencyConfig = agentModel.normalizeAgencyConfig(body.agencyConfig);
+    if (body.brainConfig !== undefined) agent.brainConfig = agentModel.normalizeBrainConfig(body.brainConfig);
+    if (body.lifecycleConfig !== undefined) agent.lifecycleConfig = agentModel.normalizeLifecycleConfig({ ...(agent.lifecycleConfig || {}), ...body.lifecycleConfig });
     if (body.knowledgeItems !== undefined && Array.isArray(body.knowledgeItems)) agent.knowledgeItems = body.knowledgeItems.map(normalizeKnowledgeItem);
     if (body.automation !== undefined) agent.automation = normalizeAutomation(body.automation);
     if (body.modelStack !== undefined) agent.modelStack = normalizeModelStack(body.modelStack, db.settings);
@@ -1818,11 +2089,17 @@ app.patch('/api/agents/:id', requireAuth, async (req, res) => {
     if (body.primaryColor || body.secondaryColor) {
       agent.theme = { primary: body.primaryColor || agent.theme.primary, secondary: body.secondaryColor || agent.theme.secondary };
     }
+    if (body.goal === undefined && (body.description !== undefined)) agent.goal = String(agent.goal || agent.description || '').trim();
+    if (body.persona === undefined && (body.tone !== undefined || body.personality !== undefined)) {
+      agent.persona = agentModel.buildPersona(agent);
+    }
+    ensureAvatarAsset(agent, GENERATED_DIR);
+    if (agentModel.normalizeBrainConfig(agent.brainConfig).enabled) ensureBrainAutomation(db, agent);
     agent.updatedAt = nowIso();
     return agent;
   });
   if (!updated) return res.status(404).json({ error: 'not_found' });
-  res.json({ ok: true, agent: { ...updated, publicUrl: `/agent/${updated.slug}?key=${updated.publicKey}`, hostedUrl: hostedUrlFor(updated) } });
+  res.json({ ok: true, agent: { ...updated, goal: String(updated.goal || updated.description || '').trim(), persona: String(updated.persona || [updated.tone, updated.personality].filter(Boolean).join(', ')).trim(), tools: agentModel.normalizeToolList(updated.tools), memoryConfig: agentModel.normalizeMemoryConfig(updated.memoryConfig), deployConfig: agentModel.normalizeDeployConfig(updated.deployConfig), channelConfig: agentModel.normalizeChannelConfig(updated.channelConfig), brainConfig: agentModel.normalizeBrainConfig(updated.brainConfig), lifecycleConfig: agentModel.normalizeLifecycleConfig(updated.lifecycleConfig), brainState: updated.brainState || null, avatarState: ensureAvatarState(updated, nowIso), reflections: Array.isArray(updated.reflections) ? updated.reflections.slice(0, 12) : [], publicUrl: `/agent/${updated.slug}?key=${updated.publicKey}`, hostedUrl: hostedUrlFor(updated) } });
 });
 
 app.delete('/api/agents/:id', requireAuth, async (req, res) => {
@@ -1831,6 +2108,10 @@ app.delete('/api/agents/:id', requireAuth, async (req, res) => {
     if (idx === -1) return false;
     const [agent] = db.agents.splice(idx, 1);
     db.conversations = db.conversations.filter((c) => c.agentId !== agent.id);
+    db.automations = db.automations.filter((item) => item.agentId !== agent.id);
+    db.runLogs = db.runLogs.filter((run) => run.agentId !== agent.id);
+    db.approvals = (db.approvals || []).filter((item) => item.agentId !== agent.id);
+    db.audit = (db.audit || []).filter((item) => item.agentId !== agent.id);
     return true;
   });
   if (!deleted) return res.status(404).json({ error: 'not_found' });
@@ -1914,6 +2195,116 @@ app.post('/api/agents/:id/telegram-token', requireAuth, async (req, res) => {
   });
   if (!result) return res.status(404).json({ error: 'not_found' });
   res.json({ ok: true, stored: true, tokenFile: result.tokenFile });
+});
+
+app.post('/api/agents/:id/runtime-sync', requireAuth, async (req, res) => {
+  const result = await mutate((db) => {
+    const agent = db.agents.find((a) => a.id === req.params.id);
+    if (!agent || !requireOwner(agent, req.auth.user.id)) return null;
+    const snapshot = readRuntimeAgentSnapshot(agent);
+    return syncAgentFromRuntime(agent, snapshot, db);
+  });
+  if (!result) return res.status(404).json({ error: 'not_found' });
+  if (!result.ok) return res.status(400).json({ error: result.error || 'runtime_sync_failed', result });
+  res.json({ ok: true, result });
+});
+
+app.post('/api/agents/:id/runtime-push', requireAuth, async (req, res) => {
+  const result = await mutate((db) => {
+    const agent = db.agents.find((a) => a.id === req.params.id);
+    if (!agent || !requireOwner(agent, req.auth.user.id)) return null;
+    const out = writeRuntimeAgentSnapshot(agent);
+    if (out?.ok) agent.updatedAt = nowIso();
+    return out;
+  });
+  if (!result) return res.status(404).json({ error: 'not_found' });
+  if (!result.ok) return res.status(400).json({ error: result.error || 'runtime_push_failed', result });
+  res.json({ ok: true, result });
+});
+
+app.post('/api/agents/:id/channel-test', requireAuth, async (req, res) => {
+  const requestedChannel = ['telegram', 'whatsapp'].includes(String(req.body?.channel || '').trim()) ? String(req.body.channel).trim() : 'telegram';
+  const message = String(req.body?.message || '').trim() || (requestedChannel === 'telegram' ? 'Telegram Live-Test aus Agent Studio.' : 'WhatsApp Bridge-Test aus Agent Studio.');
+  const db = loadDb();
+  const agent = db.agents.find((a) => a.id === req.params.id);
+  if (!agent || !requireOwner(agent, req.auth.user.id)) return res.status(404).json({ error: 'not_found' });
+
+  const status = buildChannelStatus(agent);
+  const channelState = status[requestedChannel] || {};
+  let runStatus = 'success';
+  let summary = '';
+  let delivery = null;
+
+  if (requestedChannel === 'telegram') {
+    if (!channelState.enabled) runStatus = 'disabled';
+    else if (!channelState.tokenStored) runStatus = 'blocked';
+    else {
+      delivery = await sendTelegramTestMessage(agent, message);
+      runStatus = delivery.ok ? 'delivered' : 'failed';
+    }
+    summary = runStatus === 'delivered'
+      ? `Telegram-Test zugestellt an Chat ${channelState.testChatId || '—'} via ${channelState.botName || channelState.accountId || 'Bot'}.`
+      : runStatus === 'failed'
+        ? `Telegram-Test fehlgeschlagen: ${delivery?.error || 'unbekannt'}`
+        : `Telegram-Test blockiert: ${channelState.error || (!channelState.tokenStored ? 'Token fehlt.' : 'Channel ist nicht aktiv.')}`;
+  } else {
+    if (!channelState.enabled) runStatus = 'disabled';
+    else if (!channelState.ready) runStatus = 'blocked';
+    else {
+      delivery = await sendWhatsAppBridgeMessage(agent, message);
+      runStatus = delivery.ok ? 'delivered' : 'failed';
+    }
+    summary = runStatus === 'delivered'
+      ? `WhatsApp-Test an ${channelState.target || 'Target'} über ${channelState.accountId || 'Account'} gesendet.`
+      : runStatus === 'failed'
+        ? `WhatsApp-Test fehlgeschlagen: ${delivery?.error || 'unbekannt'}`
+        : `WhatsApp-Test blockiert: ${channelState.note || 'Bridge nicht vollständig konfiguriert.'}`;
+  }
+
+  const result = await mutate((db2) => {
+    const liveAgent = db2.agents.find((a) => a.id === req.params.id);
+    if (!liveAgent) return null;
+    const run = decorateRunLog({
+      id: uid('run_'),
+      agentId: liveAgent.id,
+      source: `${requestedChannel}_test`,
+      channel: requestedChannel,
+      status: runStatus,
+      summary,
+      input: { message },
+      output: { reply: summary, delivery },
+      toolCalls: [],
+      createdAt: nowIso(),
+      meta: { channelStatus: buildChannelStatus(liveAgent) },
+    });
+    db2.runLogs.unshift(run);
+    db2.runLogs = db2.runLogs.slice(0, 1000);
+    db2.audit ||= [];
+    db2.audit.unshift({
+      id: uid('aud_'),
+      agentId: liveAgent.id,
+      action: `${requestedChannel}_channel_test`,
+      status: runStatus,
+      detail: { message, delivery, channelStatus: buildChannelStatus(liveAgent)[requestedChannel] || {} },
+      createdAt: nowIso(),
+    });
+    db2.audit = db2.audit.slice(0, 1000);
+    liveAgent.updatedAt = nowIso();
+    return { run, channelStatus: buildChannelStatus(liveAgent) };
+  });
+  if (!result) return res.status(404).json({ error: 'not_found' });
+  res.json({ ok: true, ...result });
+});
+
+app.post('/api/agents/:id/channel-test/retry', requireAuth, async (req, res) => {
+  const requestedChannel = ['telegram', 'whatsapp'].includes(String(req.body?.channel || '').trim()) ? String(req.body.channel).trim() : 'telegram';
+  const lastMessage = String(req.body?.message || '').trim();
+  req.body = {
+    ...(req.body || {}),
+    channel: requestedChannel,
+    message: lastMessage || (requestedChannel === 'telegram' ? 'Telegram Retry-Test aus Agent Studio.' : 'WhatsApp Retry-Test aus Agent Studio.'),
+  };
+  return app._router.handle(req, res, () => {}, 'post', `/api/agents/${req.params.id}/channel-test`);
 });
 
 app.post('/api/agents/:id/train', requireAuth, async (req, res) => {
@@ -2199,8 +2590,24 @@ app.post('/api/public/agent/:slug/chat', async (req, res) => {
   if (!agent) return res.status(404).json({ error: 'not_found' });
 
   let convo = db.conversations.find((c) => c.agentId === agent.id && c.visitorId === visitorId);
-  const history = convo ? convo.messages.slice(-20) : [];
-  const reply = await generateReply({ systemPrompt: composeAgentSystemPrompt(agent, db, history), history, message: String(message), routing: normalizeModelStack(agent.modelStack, db.settings) });
+  const history = convo ? convo.messages.slice(-agentModel.normalizeMemoryConfig(agent.memoryConfig).historyLimit) : [];
+  const run = await runAgentChat({
+    agent,
+    db,
+    message: String(message),
+    history,
+    source: 'public',
+    conversationId: convo?.id || null,
+    composeSystemPrompt: composeAgentSystemPrompt,
+    normalizeModelStack,
+    nowIso,
+    uid,
+    toolRunner: ({ agent: liveAgent, message: liveMessage }) => toolRunner.executeAgentTools({
+      agent: liveAgent,
+      message: liveMessage,
+      helpers: { buildAppBlueprint, writeScaffold, writeOpenClawExport, hostedUrlFor },
+    }),
+  });
 
   await mutate((db2) => {
     const liveAgent = db2.agents.find((a) => a.id === agent.id);
@@ -2211,11 +2618,14 @@ app.post('/api/public/agent/:slug/chat', async (req, res) => {
       db2.conversations.push(liveConvo);
     }
     liveConvo.messages.push({ role: 'user', content: String(message), createdAt: nowIso() });
-    liveConvo.messages.push({ role: 'assistant', content: reply, createdAt: nowIso() });
+    liveConvo.messages.push({ role: 'assistant', content: run.reply, createdAt: nowIso() });
     liveConvo.updatedAt = nowIso();
-    if ((normalizeLearningProfile(liveAgent.learningProfile)).enabled) applyAutoLearn(liveAgent, { message: String(message), reply, history });
+    db2.runLogs.unshift({ ...run.runLog, conversationId: liveConvo.id });
+    db2.runLogs = db2.runLogs.slice(0, 1000);
+    if ((normalizeLearningProfile(liveAgent.learningProfile)).enabled) applyAutoLearn(liveAgent, { message: String(message), reply: run.reply, history });
+    applyBrainReflection(liveAgent, { ...run.runLog, conversationId: liveConvo.id }, nowIso);
     const workspace = workspaceForAgent(db2, liveAgent);
-    if (workspace && normalizeLearningProfile(workspace.learningProfile).enabled) applyAutoLearn(workspace, { message: String(message), reply, history });
+    if (workspace && normalizeLearningProfile(workspace.learningProfile).enabled) applyAutoLearn(workspace, { message: String(message), reply: run.reply, history });
     liveAgent.updatedAt = nowIso();
   });
 
@@ -2223,10 +2633,10 @@ app.post('/api/public/agent/:slug/chat', async (req, res) => {
     source: 'public',
     conversationId: convo?.id || null,
     message: String(message),
-    reply,
+    reply: run.reply,
   });
 
-  res.json({ ok: true, response: reply, visitorId, agentName: agent.name });
+  res.json({ ok: true, response: run.reply, visitorId, agentName: agent.name, runId: run.runLog.id, toolCalls: run.toolCalls || [], generatedApp: run.toolOutput?.generatedApp || null, openclawExport: run.toolOutput?.openclawExport || null });
 });
 
 app.post('/api/agents/:id/chat', requireAuth, async (req, res) => {
@@ -2238,12 +2648,23 @@ app.post('/api/agents/:id/chat', requireAuth, async (req, res) => {
 
   const ownerVisitorId = `owner:${req.auth.user.id}`;
   const convo = ownerConversationForAgent(db, agent.id, req.auth.user.id);
-  const history = (convo.messages || []).slice(-20);
-  const reply = await generateReply({
-    systemPrompt: composeAgentSystemPrompt(agent, db, history),
-    history,
+  const history = (convo.messages || []).slice(-agentModel.normalizeMemoryConfig(agent.memoryConfig).historyLimit);
+  const run = await runAgentChat({
+    agent,
+    db,
     message,
-    routing: normalizeModelStack(agent.modelStack, db.settings),
+    history,
+    source: 'owner',
+    conversationId: convo.id || null,
+    composeSystemPrompt: composeAgentSystemPrompt,
+    normalizeModelStack,
+    nowIso,
+    uid,
+    toolRunner: ({ agent: liveAgent, message: liveMessage }) => toolRunner.executeAgentTools({
+      agent: liveAgent,
+      message: liveMessage,
+      helpers: { buildAppBlueprint, writeScaffold, writeOpenClawExport, hostedUrlFor },
+    }),
   });
 
   await mutate((db2) => {
@@ -2255,11 +2676,14 @@ app.post('/api/agents/:id/chat', requireAuth, async (req, res) => {
       db2.conversations.push(liveConvo);
     }
     liveConvo.messages.push({ role: 'user', content: message, createdAt: nowIso() });
-    liveConvo.messages.push({ role: 'assistant', content: reply, createdAt: nowIso() });
+    liveConvo.messages.push({ role: 'assistant', content: run.reply, createdAt: nowIso() });
     liveConvo.updatedAt = nowIso();
-    if ((normalizeLearningProfile(liveAgent.learningProfile)).enabled) applyAutoLearn(liveAgent, { message, reply, history });
+    db2.runLogs.unshift({ ...run.runLog, conversationId: liveConvo.id });
+    db2.runLogs = db2.runLogs.slice(0, 1000);
+    if ((normalizeLearningProfile(liveAgent.learningProfile)).enabled) applyAutoLearn(liveAgent, { message, reply: run.reply, history });
+    applyBrainReflection(liveAgent, { ...run.runLog, conversationId: liveConvo.id }, nowIso);
     const workspace = workspaceForAgent(db2, liveAgent);
-    if (workspace && normalizeLearningProfile(workspace.learningProfile).enabled) applyAutoLearn(workspace, { message, reply, history });
+    if (workspace && normalizeLearningProfile(workspace.learningProfile).enabled) applyAutoLearn(workspace, { message, reply: run.reply, history });
     liveAgent.updatedAt = nowIso();
     return true;
   });
@@ -2268,10 +2692,10 @@ app.post('/api/agents/:id/chat', requireAuth, async (req, res) => {
     source: 'owner',
     conversationId: convo.id || null,
     message,
-    reply,
+    reply: run.reply,
   });
 
-  res.json({ ok: true, response: reply, conversationId: convo.id || null, agentName: agent.name });
+  res.json({ ok: true, response: run.reply, conversationId: convo.id || null, agentName: agent.name, runId: run.runLog.id, toolCalls: run.toolCalls || [], generatedApp: run.toolOutput?.generatedApp || null, openclawExport: run.toolOutput?.openclawExport || null });
 });
 
 app.get('/api/agents/:id/conversations', requireAuth, (req, res) => {
@@ -2280,6 +2704,298 @@ app.get('/api/agents/:id/conversations', requireAuth, (req, res) => {
   if (!agent) return res.status(404).json({ error: 'not_found' });
   const convo = db.conversations.filter((c) => c.agentId === agent.id);
   res.json({ ok: true, conversations: convo });
+});
+
+app.get('/api/agents/:id/brain', requireAuth, (req, res) => {
+  const db = loadDb();
+  const agent = db.agents.find((a) => a.id === req.params.id && a.userId === req.auth.user.id);
+  if (!agent) return res.status(404).json({ error: 'not_found' });
+  res.json({
+    ok: true,
+    brainConfig: agentModel.normalizeBrainConfig(agent.brainConfig),
+    lifecycleConfig: agentModel.normalizeLifecycleConfig(agent.lifecycleConfig),
+    brainState: agent.brainState || null,
+    avatarState: ensureAvatarState(agent, nowIso),
+    reflections: Array.isArray(agent.reflections) ? agent.reflections.slice(0, 20) : [],
+  });
+});
+
+app.post('/api/agents/:id/brain/reflect', requireAuth, async (req, res) => {
+  const updated = await mutate((db) => {
+    const agent = db.agents.find((a) => a.id === req.params.id && a.userId === req.auth.user.id);
+    if (!agent) return null;
+    const reflection = applyBrainReflection(agent, {
+      source: 'manual_reflection',
+      toolCalls: [],
+      output: { reply: String(req.body?.note || 'Manuelle Reflexion ausgelöst.') },
+    }, nowIso);
+    ensureAvatarAsset(agent, GENERATED_DIR);
+    ensureBrainAutomation(db, agent);
+    agent.updatedAt = nowIso();
+    return { agent, reflection };
+  });
+  if (!updated) return res.status(404).json({ error: 'not_found' });
+  res.json({ ok: true, reflection: updated.reflection, brainState: updated.agent.brainState || null, avatarState: ensureAvatarState(updated.agent, nowIso) });
+});
+
+app.post('/api/agents/:id/brain/avatar-refresh', requireAuth, async (req, res) => {
+  const updated = await mutate((db) => {
+    const agent = db.agents.find((a) => a.id === req.params.id && a.userId === req.auth.user.id);
+    if (!agent) return null;
+    ensureAvatarState(agent, nowIso);
+    if (req.body?.look) agent.avatarState.look = String(req.body.look).trim();
+    if (req.body?.accent) agent.avatarState.accent = String(req.body.accent).trim();
+    if (req.body?.prompt) agent.avatarState.currentPrompt = String(req.body.prompt).trim();
+    const assetUrl = ensureAvatarAsset(agent, GENERATED_DIR);
+    agent.avatarState.updatedAt = nowIso();
+    agent.updatedAt = nowIso();
+    return { assetUrl, avatarState: agent.avatarState };
+  });
+  if (!updated) return res.status(404).json({ error: 'not_found' });
+  res.json({ ok: true, assetUrl: updated.assetUrl, avatarState: updated.avatarState });
+});
+
+app.post('/api/agents/:id/brain/install-loop', requireAuth, async (req, res) => {
+  const updated = await mutate((db) => {
+    const agent = db.agents.find((a) => a.id === req.params.id && a.userId === req.auth.user.id);
+    if (!agent) return null;
+    const automation = ensureBrainAutomation(db, agent, 'cron');
+    agent.updatedAt = nowIso();
+    return automation;
+  });
+  if (!updated) return res.status(404).json({ error: 'not_found' });
+  res.json({ ok: true, automation: updated });
+});
+
+app.get('/api/agents/:id/agency', requireAuth, (req, res) => {
+  const db = loadDb();
+  const agent = db.agents.find((a) => a.id === req.params.id && a.userId === req.auth.user.id);
+  if (!agent) return res.status(404).json({ error: 'not_found' });
+  res.json({
+    ok: true,
+    agencyConfig: agentModel.normalizeAgencyConfig(agent.agencyConfig),
+    approvals: (db.approvals || []).filter((item) => item.agentId === agent.id).slice(-20).reverse(),
+    audit: (db.audit || []).filter((item) => item.agentId === agent.id).slice(-40).reverse(),
+    channelConfig: agentModel.normalizeChannelConfig(agent.channelConfig),
+  });
+});
+
+app.post('/api/agents/:id/agency/act', requireAuth, async (req, res) => {
+  const result = await mutate((db) => {
+    const agent = db.agents.find((a) => a.id === req.params.id && a.userId === req.auth.user.id);
+    if (!agent) return null;
+    const agencyConfig = agentModel.normalizeAgencyConfig(agent.agencyConfig);
+    const action = String(req.body?.action || '').trim();
+    const payload = req.body?.payload && typeof req.body.payload === 'object' ? req.body.payload : {};
+    const out = executeAgencyAction({ db, uid, nowIso, agent, agencyConfig, action, payload });
+    agent.updatedAt = nowIso();
+    return out;
+  });
+  if (!result) return res.status(404).json({ error: 'not_found' });
+  res.json({ ok: true, result });
+});
+
+app.post('/api/agents/:id/agency/approve/:approvalId', requireAuth, async (req, res) => {
+  const result = await mutate((db) => {
+    const agent = db.agents.find((a) => a.id === req.params.id && a.userId === req.auth.user.id);
+    if (!agent) return null;
+    const approval = (db.approvals || []).find((item) => item.id === req.params.approvalId && item.agentId === agent.id);
+    if (!approval) return false;
+    approval.status = 'approved';
+    approval.approvedAt = nowIso();
+    const out = executeAgencyAction({ db, uid, nowIso, agent, agencyConfig: agentModel.normalizeAgencyConfig(agent.agencyConfig), action: approval.kind === 'run_command' ? 'run_command' : 'write_file', payload: { ...(approval.payload || {}), approved: true } });
+    approval.result = out;
+    approval.completedAt = nowIso();
+    approval.status = out?.status === 'success' ? 'executed' : out?.status === 'error' ? 'failed' : (out?.status || approval.status);
+    agent.updatedAt = nowIso();
+    return { approval, out };
+  });
+  if (result === null) return res.status(404).json({ error: 'not_found' });
+  if (result === false) return res.status(404).json({ error: 'approval_not_found' });
+  res.json({ ok: true, approval: result.approval, result: result.out });
+});
+
+app.get('/api/agents/:id/automations', requireAuth, (req, res) => {
+  const db = loadDb();
+  const agent = db.agents.find((a) => a.id === req.params.id && a.userId === req.auth.user.id);
+  if (!agent) return res.status(404).json({ error: 'not_found' });
+  const automations = db.automations.filter((item) => item.agentId === agent.id).map((item) => automationEngine.normalizeAutomationRecord(item, { uid, nowIso, agentId: agent.id }));
+  res.json({ ok: true, automations });
+});
+
+app.post('/api/agents/:id/automations', requireAuth, async (req, res) => {
+  const created = await mutate((db) => {
+    const agent = db.agents.find((a) => a.id === req.params.id && a.userId === req.auth.user.id);
+    if (!agent) return null;
+    const automation = automationEngine.normalizeAutomationRecord(req.body || {}, { uid, nowIso, agentId: agent.id });
+    if (!automation.trigger.token && automation.trigger.type === 'webhook') automation.trigger.token = uid('whk_');
+    db.automations.push(automation);
+    agent.updatedAt = nowIso();
+    return automation;
+  });
+  if (!created) return res.status(404).json({ error: 'not_found' });
+  res.json({ ok: true, automation: created });
+});
+
+app.patch('/api/automations/:id', requireAuth, async (req, res) => {
+  const updated = await mutate((db) => {
+    const automation = db.automations.find((item) => item.id === req.params.id);
+    if (!automation) return null;
+    const agent = db.agents.find((a) => a.id === automation.agentId && a.userId === req.auth.user.id);
+    if (!agent) return null;
+    const next = automationEngine.normalizeAutomationRecord({ ...automation, ...(req.body || {}), updatedAt: nowIso() }, { uid, nowIso, agentId: agent.id });
+    Object.assign(automation, next);
+    agent.updatedAt = nowIso();
+    return automation;
+  });
+  if (!updated) return res.status(404).json({ error: 'not_found' });
+  res.json({ ok: true, automation: updated });
+});
+
+app.delete('/api/automations/:id', requireAuth, async (req, res) => {
+  const deleted = await mutate((db) => {
+    const idx = db.automations.findIndex((item) => item.id === req.params.id);
+    if (idx === -1) return false;
+    const automation = db.automations[idx];
+    const agent = db.agents.find((a) => a.id === automation.agentId && a.userId === req.auth.user.id);
+    if (!agent) return false;
+    db.automations.splice(idx, 1);
+    return true;
+  });
+  if (!deleted) return res.status(404).json({ error: 'not_found' });
+  res.json({ ok: true });
+});
+
+app.post('/api/automations/:id/run', requireAuth, async (req, res) => {
+  const db = loadDb();
+  const automation = db.automations.find((item) => item.id === req.params.id);
+  if (!automation) return res.status(404).json({ error: 'not_found' });
+  const agent = db.agents.find((a) => a.id === automation.agentId && a.userId === req.auth.user.id);
+  if (!agent) return res.status(404).json({ error: 'not_found' });
+  const result = await automationEngine.enqueueAutomationRun(async () => {
+    const latestDb = loadDb();
+    const latestAgent = latestDb.agents.find((a) => a.id === agent.id) || agent;
+    const latestAutomation = latestDb.automations.find((item) => item.id === automation.id) || automation;
+    const run = await automationEngine.executeAutomation({
+      automation: latestAutomation,
+      agent: latestAgent,
+      db: latestDb,
+      payload: req.body || {},
+      deps: {
+        uid,
+        nowIso,
+        runAgentChat,
+        composeSystemPrompt: composeAgentSystemPrompt,
+        normalizeModelStack,
+        helpers: { buildAppBlueprint, writeScaffold, writeOpenClawExport, hostedUrlFor },
+      },
+    });
+    await mutate((db2) => {
+      const liveAutomation = db2.automations.find((item) => item.id === automation.id);
+      if (liveAutomation) {
+        liveAutomation.lastRunAt = nowIso();
+        liveAutomation.updatedAt = nowIso();
+      }
+      const liveAgent = db2.agents.find((a) => a.id === agent.id);
+      if (liveAgent) {
+        applyBrainReflection(liveAgent, run, nowIso);
+        liveAgent.updatedAt = nowIso();
+      }
+      db2.runLogs.unshift(run);
+      db2.runLogs = db2.runLogs.slice(0, 1000);
+      return true;
+    });
+    return run;
+  });
+  res.json({ ok: true, run: result });
+});
+
+app.post('/api/triggers/webhook/:token', async (req, res) => {
+  const db = loadDb();
+  const automation = db.automations.find((item) => item.trigger?.type === 'webhook' && item.trigger?.token === req.params.token && item.enabled !== false);
+  if (!automation) return res.status(404).json({ error: 'not_found' });
+  const agent = db.agents.find((a) => a.id === automation.agentId);
+  if (!agent) return res.status(404).json({ error: 'agent_not_found' });
+  const result = await automationEngine.enqueueAutomationRun(async () => {
+    const latestDb = loadDb();
+    const latestAgent = latestDb.agents.find((a) => a.id === agent.id) || agent;
+    const latestAutomation = latestDb.automations.find((item) => item.id === automation.id) || automation;
+    const run = await automationEngine.executeAutomation({
+      automation: latestAutomation,
+      agent: latestAgent,
+      db: latestDb,
+      payload: req.body || {},
+      deps: {
+        uid,
+        nowIso,
+        runAgentChat,
+        composeSystemPrompt: composeAgentSystemPrompt,
+        normalizeModelStack,
+        helpers: { buildAppBlueprint, writeScaffold, writeOpenClawExport, hostedUrlFor },
+      },
+    });
+    await mutate((db2) => {
+      const liveAutomation = db2.automations.find((item) => item.id === automation.id);
+      if (liveAutomation) {
+        liveAutomation.lastRunAt = nowIso();
+        liveAutomation.updatedAt = nowIso();
+      }
+      const liveAgent = db2.agents.find((a) => a.id === agent.id);
+      if (liveAgent) {
+        applyBrainReflection(liveAgent, run, nowIso);
+        liveAgent.updatedAt = nowIso();
+      }
+      db2.runLogs.unshift(run);
+      db2.runLogs = db2.runLogs.slice(0, 1000);
+      return true;
+    });
+    return run;
+  });
+  res.json({ ok: true, run: result });
+});
+
+app.post('/api/triggers/cron/:id/run', requireAuth, async (req, res) => {
+  const db = loadDb();
+  const automation = db.automations.find((item) => item.id === req.params.id && item.trigger?.type === 'cron');
+  if (!automation) return res.status(404).json({ error: 'not_found' });
+  const agent = db.agents.find((a) => a.id === automation.agentId && a.userId === req.auth.user.id);
+  if (!agent) return res.status(404).json({ error: 'not_found' });
+  const result = await automationEngine.enqueueAutomationRun(async () => {
+    const latestDb = loadDb();
+    const latestAgent = latestDb.agents.find((a) => a.id === agent.id) || agent;
+    const latestAutomation = latestDb.automations.find((item) => item.id === automation.id) || automation;
+    const run = await automationEngine.executeAutomation({
+      automation: latestAutomation,
+      agent: latestAgent,
+      db: latestDb,
+      payload: req.body || {},
+      deps: {
+        uid,
+        nowIso,
+        runAgentChat,
+        composeSystemPrompt: composeAgentSystemPrompt,
+        normalizeModelStack,
+        helpers: { buildAppBlueprint, writeScaffold, writeOpenClawExport, hostedUrlFor },
+      },
+    });
+    await mutate((db2) => {
+      const liveAutomation = db2.automations.find((item) => item.id === automation.id);
+      if (liveAutomation) {
+        liveAutomation.lastRunAt = nowIso();
+        liveAutomation.updatedAt = nowIso();
+      }
+      const liveAgent = db2.agents.find((a) => a.id === agent.id);
+      if (liveAgent) {
+        applyBrainReflection(liveAgent, run, nowIso);
+        liveAgent.updatedAt = nowIso();
+      }
+      db2.runLogs.unshift(run);
+      db2.runLogs = db2.runLogs.slice(0, 1000);
+      return true;
+    });
+    return run;
+  });
+  res.json({ ok: true, run: result });
 });
 
 app.get('/api/agents/:id/export', requireAuth, (req, res) => {

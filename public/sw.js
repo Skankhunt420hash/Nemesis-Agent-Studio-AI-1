@@ -1,5 +1,5 @@
-const CACHE = 'agent-studio-v1';
-const ASSETS = ['/', '/index.html', '/agent.html', '/styles.css', '/app.js', '/agent.js', '/manifest.webmanifest', '/icon.svg'];
+const CACHE = 'agent-studio-v2-authfix';
+const ASSETS = ['/', '/index.html', '/agent.html', '/styles.css', '/app.js', '/agent.js', '/local-api.js', '/manifest.webmanifest', '/icon.svg'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(ASSETS)).then(() => self.skipWaiting()));

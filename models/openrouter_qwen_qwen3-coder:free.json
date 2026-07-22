@@ -1,0 +1,9 @@
+{
+  "modelId": "openrouter/qwen/qwen3-coder:free",
+  "cacheDir": "/root/.openclaw/workspace/projects/agent-generator-v2/models",
+  "downloadedAt": "2026-07-14T17:04:01.071Z",
+  "provider": "openrouter",
+  "fallbackIndex": 7,
+  "status": "available",
+  "description": "Kostenloses KI-Modell für die Offline-Nutzung im Agent-Generator"
+}

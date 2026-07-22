@@ -4,6 +4,8 @@ const $$ = (s) => [...document.querySelectorAll(s)];
 const esc = (value) => String(value ?? '').replace(/[&<>"]|'/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
 const demoDisabledAttr = (disabled) => disabled ? 'disabled title="Im APK-Demo-Modus ohne Backend deaktiviert." style="opacity:.55;pointer-events:none"' : '';
 const demoHref = (href, disabled) => disabled ? '#' : (href || '#');
+const AGENT_DRAFT_KEY = 'nemesis-agent-draft-v1';
+const DASHBOARD_CACHE_KEY = 'nemesis-dashboard-cache-v1';
 
 function showTab(tab) {
   state.tab = tab;
@@ -21,11 +23,130 @@ function setStatus(text, kind = 'info') {
   el.style.color = kind === 'error' ? '#991b1b' : kind === 'ok' ? '#166534' : '#1d4ed8';
 }
 
+function translateError(error) {
+  const msg = String(error?.message || error || '');
+  if (msg.includes('invalid_credentials')) return 'Login fehlgeschlagen. Bitte E-Mail und Passwort prüfen.';
+  if (msg.includes('email_exists')) return 'Diese E-Mail ist bereits registriert.';
+  if (msg.includes('invalid_input')) return 'Bitte alle Felder korrekt ausfüllen. Passwort mindestens 8 Zeichen.';
+  if (msg.includes('unauthorized')) return 'Bitte zuerst einloggen.';
+  if (msg.includes('Failed to fetch')) return 'Backend nicht erreichbar. In der APK sollte jetzt der lokale Modus einspringen.';
+  return msg || 'Unbekannter Fehler.';
+}
+
 async function api(path, opts = {}) {
   const res = await fetch(path, { headers: { 'Content-Type': 'application/json' }, credentials: 'include', ...opts });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.message || data.error || `HTTP ${res.status}`);
   return data;
+}
+
+function saveAgentDraft(form) {
+  if (!form) return;
+  const fd = new FormData(form);
+  const draft = {};
+  for (const [key, value] of fd.entries()) draft[key] = value;
+  localStorage.setItem(AGENT_DRAFT_KEY, JSON.stringify(draft));
+}
+
+function restoreAgentDraft(form) {
+  if (!form) return;
+  try {
+    const raw = JSON.parse(localStorage.getItem(AGENT_DRAFT_KEY) || '{}');
+    Object.entries(raw).forEach(([key, value]) => {
+      const el = form.elements.namedItem(key);
+      if (!el || value == null) return;
+      if (el.type === 'checkbox') el.checked = value === true || value === 'on';
+      else el.value = value;
+    });
+  } catch {}
+}
+
+function clearAgentDraft() {
+  localStorage.removeItem(AGENT_DRAFT_KEY);
+}
+
+function buildPreviewModel(form) {
+  const fd = new FormData(form);
+  const name = String(fd.get('name') || '').trim() || 'Neuer Premium-Agent';
+  const appIdea = String(fd.get('appIdea') || '').trim();
+  const businessType = String(fd.get('businessType') || 'Agent').trim();
+  const tone = String(fd.get('tone') || 'premium, klar, hilfreich').trim();
+  const personality = String(fd.get('personality') || 'smart, direkt, zuverlässig').trim();
+  return {
+    name,
+    promise: appIdea || 'Hier siehst du sofort, wie der Agent als Produkt wirkt.',
+    dna: `${businessType}-Agent • ${tone} • ${personality}`,
+    prompt: `Rolle: ${businessType}-Agent\nMission: ${appIdea || 'Noch keine Mission definiert'}\nTon: ${tone}`,
+    team: ['Captain', 'Research', 'Execution'],
+    deploy: 'Telegram • OpenClaw Web • One-Tap ready',
+    lab: ['Neukunde', 'Skeptischer User', 'Hot Lead'],
+  };
+}
+
+function renderLivePreview() {
+  const form = $('#agentForm');
+  if (!form) return;
+  const model = buildPreviewModel(form);
+  if ($('#previewName')) $('#previewName').textContent = model.name;
+  if ($('#previewPromise')) $('#previewPromise').textContent = model.promise;
+  if ($('#previewDna')) $('#previewDna').textContent = model.dna;
+  if ($('#previewPrompt')) $('#previewPrompt').innerHTML = `<pre class="code">${esc(model.prompt)}</pre>`;
+  if ($('#previewTeam')) $('#previewTeam').innerHTML = model.team.map((x) => `<span class="chip">${esc(x)}</span>`).join(' ');
+  if ($('#previewDeploy')) $('#previewDeploy').textContent = model.deploy;
+  if ($('#previewLab')) $('#previewLab').innerHTML = model.lab.map((x) => `<span class="chip">${esc(x)}</span>`).join(' ');
+}
+
+function applyMagicFill(mode = 'default') {
+  const form = $('#agentForm');
+  if (!form) return;
+  const presets = mode === 'premium'
+    ? {
+        name: 'Nemesis Premium Operator',
+        appIdea: 'Baut, optimiert und steuert Premium-Agenten für Sales, Support und Automatisierung.',
+        businessType: 'Premium Automation',
+        description: 'Ein High-End-Agent, der Leads, Gespräche und Automationen steuert.',
+        tone: 'premium, souverän, direkt',
+        personality: 'smart, strategisch, zuverlässig',
+      }
+    : {
+        name: 'Mein erster Agent',
+        appIdea: 'Hilft mir Anfragen zu beantworten und Aufgaben schneller zu erledigen.',
+        businessType: 'Assistant',
+        description: 'Ein schneller Helfer für Alltag, Kunden und Antworten.',
+        tone: 'klar, freundlich, effizient',
+        personality: 'hilfreich, direkt, ruhig',
+      };
+  Object.entries(presets).forEach(([key, value]) => {
+    const el = form.elements.namedItem(key);
+    if (el) el.value = value;
+  });
+  saveAgentDraft(form);
+  renderLivePreview();
+}
+
+function bindDraftForm(formId, storageKey) {
+  const form = document.getElementById(formId);
+  if (!form) return;
+  try {
+    const raw = JSON.parse(localStorage.getItem(storageKey) || '{}');
+    Object.entries(raw).forEach(([key, value]) => {
+      const el = form.elements.namedItem(key);
+      if (!el || value == null) return;
+      if (el.type === 'checkbox') el.checked = value === true || value === 'on';
+      else el.value = value;
+    });
+  } catch {}
+
+  const save = () => {
+    const fd = new FormData(form);
+    const draft = {};
+    for (const [key, value] of fd.entries()) draft[key] = value;
+    localStorage.setItem(storageKey, JSON.stringify(draft));
+  };
+
+  form.addEventListener('input', save);
+  form.addEventListener('change', save);
+  form.addEventListener('submit', () => localStorage.removeItem(storageKey));
 }
 
 function renderStats(stats = {}) {
@@ -105,6 +226,39 @@ function renderShadowReviews(reviews = []) {
   return reviews.map((review) => `<div class="item"><strong>${esc(review.rating || 'ok')}</strong><div class="muted tiny">${esc(review.source || 'chat')} • ${esc(review.createdAt || '')}</div><div style="margin-top:8px;white-space:pre-wrap">${esc(review.review || '')}</div></div>`).join('');
 }
 
+function renderRunLogs(logs = []) {
+  if (!logs.length) return '<div class="item">Noch kein Run-Log.</div>';
+  const colorFor = (status) => ({ delivered: '#16a34a', success: '#16a34a', executed: '#16a34a', failed: '#dc2626', error: '#dc2626', blocked: '#d97706', pending: '#d97706', disabled: '#64748b' }[String(status || '').toLowerCase()] || '#64748b');
+  return logs.map((run) => `<div class="item"><div class="task"><strong>${esc(run.source || run.kind || 'run')}</strong><div style="display:flex;gap:8px;align-items:center;"><span class="badge">${esc(run.channel || 'other')}</span><span class="badge" style="background:${colorFor(run.status)};color:white;border-color:${colorFor(run.status)};">${esc(run.status || 'ok')}</span></div></div><div class="muted tiny">${esc(run.createdAt || run.finishedAt || run.startedAt || '')}</div><div style="margin-top:8px;white-space:pre-wrap">${esc(run.output?.reply || run.reply || run.summary || run.preview || '')}</div>${run.output?.delivery ? `<div class="muted tiny" style="margin-top:6px;white-space:pre-wrap">Delivery: ${esc(JSON.stringify(run.output.delivery, null, 2))}</div>` : ''}${run.toolCalls?.length ? `<div class="muted tiny" style="margin-top:6px;">Tools: ${esc(run.toolCalls.map((t) => t.tool || t.id || '?').join(', '))}</div>` : ''}</div>`).join('');
+}
+
+function renderApprovals(approvals = []) {
+  if (!approvals.length) return '<div class="item">Keine offenen oder letzten Approvals.</div>';
+  return approvals.map((item) => `<div class="item"><div class="task"><strong>${esc(item.kind || 'approval')}</strong>${item.status === 'pending' ? `<button class="btn secondary" data-approval-approve="${esc(item.id)}">Freigeben</button>` : `<span class="badge">${esc(item.status || 'done')}</span>`}</div><div class="muted tiny">${esc(item.createdAt || '')}${item.approvedAt ? ` • freigegeben ${esc(item.approvedAt)}` : ''}</div><div style="margin-top:8px;white-space:pre-wrap">${esc(item.reason || '')}</div>${item.result ? `<div class="muted tiny" style="margin-top:6px;white-space:pre-wrap">Ergebnis: ${esc(item.result.stdout || item.result.path || item.result.reason || item.result.status || '')}</div>` : ''}<div class="muted tiny" style="margin-top:6px;white-space:pre-wrap">${esc(JSON.stringify(item.payload || {}, null, 2))}</div></div>`).join('');
+}
+
+function renderTelegramStatus(status = {}) {
+  const tg = status.telegram || {};
+  const readiness = tg.testChatId && tg.tokenStored && tg.runtimeReady ? 'bereit' : 'noch nicht komplett';
+  return `<div class="item"><div class="task"><strong>Telegram Fokus</strong><span class="badge">${esc(readiness)}</span></div><div class="muted tiny">Bot: ${esc(tg.botName || tg.accountId || '—')} • Test-Chat: ${esc(tg.testChatId || 'fehlt')} • Runtime: ${tg.runtimeReady ? 'ok' : 'fehlt'}</div><div style="margin-top:8px;white-space:pre-wrap">${esc(tg.testChatId ? 'Mit diesem Chat kann der Agent echte Live-Tests senden.' : 'Für echte Telegram-Live-Tests bitte eine Test Chat ID setzen.')}</div></div>`;
+}
+
+function renderAudit(audit = []) {
+  if (!audit.length) return '<div class="item">Noch kein Audit-Eintrag.</div>';
+  return audit.map((item) => `<div class="item"><strong>${esc(item.action || 'action')}</strong><div class="muted tiny">${esc(item.status || 'ok')} • ${esc(item.createdAt || '')}</div><div style="margin-top:8px;white-space:pre-wrap">${esc(JSON.stringify(item.detail || {}, null, 2))}</div></div>`).join('');
+}
+
+function renderChannelStatus(status = {}) {
+  const tg = status.telegram || {};
+  const wa = status.whatsapp || {};
+  const oc = status.openclaw || {};
+  return `<div class="list">
+    <div class="item"><strong>Telegram</strong><div class="muted tiny">enabled: ${tg.enabled ? 'ja' : 'nein'} • token: ${tg.tokenStored ? 'ok' : 'fehlt'} • runtime: ${tg.runtimeReady ? 'ok' : 'fehlt'} • testChat: ${tg.testChatId ? esc(tg.testChatId) : 'fehlt'}</div><div style="margin-top:8px;white-space:pre-wrap">${esc(tg.ready ? `Bereit als ${tg.accountId || tg.botName || 'Telegram-Agent'}.` : (tg.error || 'Noch nicht komplett live.'))}</div></div>
+    <div class="item"><strong>WhatsApp</strong><div class="muted tiny">enabled: ${wa.enabled ? 'ja' : 'nein'} • target: ${wa.target ? esc(wa.target) : 'fehlt'} • account: ${wa.accountId ? esc(wa.accountId) : 'fehlt'} • webhook: ${wa.webhookUrl ? 'ok' : 'fehlt'}</div><div style="margin-top:8px;white-space:pre-wrap">${esc(wa.note || '')}</div></div>
+    <div class="item"><strong>OpenClaw Runtime</strong><div class="muted tiny">agent: ${esc(oc.agentId || '—')} • exists: ${oc.exists ? 'ja' : 'nein'}</div><div style="margin-top:8px;white-space:pre-wrap">${esc(oc.error || 'Runtime-Bind vorhanden oder bereit für Sync.')}</div></div>
+  </div>`;
+}
+
 function agentCard(agent) {
   const blueprint = agent.blueprint ? `${agent.blueprint.template || 'saas'} • ${(agent.blueprint.features || []).slice(0,3).join(', ')}` : 'no blueprint';
   const automation = agent.automation?.enabled ? `Telegram: ${agent.automation.telegramBotName || agent.automation.telegramAccountId || 'on'}` : 'Automation off';
@@ -135,9 +289,8 @@ async function refreshDashboard() {
   const me = await api('/api/me');
   state.me = me.user;
   if (!state.me) {
-    setStatus('Bitte einloggen oder Account erstellen.', 'info');
-    showTab('auth');
-    $('#agentList').innerHTML = '<div class="item">Noch keine Session.</div>';
+    setStatus('Single-User-Modus wird vorbereitet…', 'info');
+    $('#agentList').innerHTML = '<div class="item">Initialisiere App…</div>';
     renderStats({});
     renderWorkspaces([]);
     return;
@@ -151,11 +304,12 @@ async function refreshDashboard() {
   state.openclawAgents = openclawAgents.agents || [];
   state.settings = dash.settings || {};
   state.workspaceId = state.workspaceId || dash.workspaces?.[0]?.id || null;
-  document.querySelector('[data-tab="auth"]')?.classList.toggle('hidden', state.demoMode);
-  $('#logoutBtn')?.classList.toggle('hidden', state.demoMode);
-  $('#authTab')?.classList.toggle('hidden', state.demoMode || state.tab !== 'auth');
-  if (state.demoMode && state.tab === 'auth') state.tab = 'dashboard';
-  setStatus(`Eingeloggt als ${dash.user.name} • ${dash.stats.agents} Agent(en)${state.demoMode ? ' • Demo-Modus ohne Backend' : ''}`, 'ok');
+  localStorage.setItem(DASHBOARD_CACHE_KEY, JSON.stringify(dash));
+  document.querySelector('[data-tab="auth"]')?.classList.add('hidden');
+  $('#logoutBtn')?.classList.add('hidden');
+  $('#authTab')?.classList.add('hidden');
+  if (state.tab === 'auth') state.tab = 'dashboard';
+  setStatus(`Bereit als ${dash.user.name} • ${dash.stats.agents} Agent(en) • Single-User-Modus${state.demoMode ? ' • lokal' : ''}`, 'ok');
   renderStats(dash.stats);
   renderWorkspaces(dash.workspaces || []);
   renderSchools(state.schools);
@@ -166,11 +320,17 @@ async function refreshDashboard() {
 }
 
 async function openAgent(id) {
-  const data = await api(`/api/agents/${id}`);
+  state.runLogFilter = state.runLogFilter || 'all';
+  const data = await api(`/api/agents/${id}?runChannel=${encodeURIComponent(state.runLogFilter)}`);
   const adviceData = await api(`/api/agents/${id}/advice`).catch(() => ({ advice: [] }));
   const a = data.agent;
   const tips = adviceData.advice || [];
   const demoMode = !!(a.demoMode || state.demoMode || window.__LOCAL_DEMO_API__?.enabled);
+  const channelStatusHtml = renderChannelStatus(data.channelStatus || {});
+  const telegramStatusHtml = renderTelegramStatus(data.channelStatus || {});
+  const approvalsHtml = renderApprovals(data.approvals || []);
+  const auditHtml = renderAudit(data.audit || []);
+  const runLogsHtml = renderRunLogs(data.runLogs || []);
   const knowledge = (a.knowledgeItems || []).map((item) => `
     <div class="item">
       <div class="task"><strong>${esc(item.title)}</strong><button class="btn secondary" data-know-del="${esc(item.id)}">Löschen</button></div>
@@ -188,12 +348,14 @@ async function openAgent(id) {
       <span class="chip">Autolearn: ${a.learningProfile?.enabled ? 'on' : 'off'}</span>
       <span class="chip">Token: ${a.telegramTokenStored ? 'gespeichert' : 'fehlt'}</span>
       <span class="chip">Schools: ${(a.schoolIds || []).length}</span>
+      <span class="chip">Agency: ${esc(a.agencyConfig?.mode || 'safe')}</span>
+      <span class="chip">Brain: ${a.brainConfig?.enabled ? 'on' : 'off'}</span>
     </div>
     <div class="actions" style="margin:14px 0;">
       <a class="btn" target="_blank" rel="noreferrer" href="${demoHref(a.publicUrl, demoMode)}" ${demoMode ? 'data-demo-disabled="1"' : ''}>Public Chat</a>
       <a class="btn secondary" target="_blank" rel="noreferrer" href="${demoHref(a.hostedUrl, demoMode)}" ${demoMode ? 'data-demo-disabled="1"' : ''}>Hosted App</a>
       <a class="btn secondary" href="${demoMode ? '#' : `/api/agents/${a.id}/export?format=md`}" target="_blank" rel="noreferrer" ${demoMode ? 'data-demo-disabled="1"' : ''}>Export MD</a>
-      <button class="btn secondary" data-gen="${a.id}" ${demoDisabledAttr(demoMode)}>Generate Functional App</button>
+      <button class="btn secondary" data-gen="${a.id}" ${demoDisabledAttr(demoMode)}>Generate Code</button>
       <button class="btn secondary" data-train="${a.id}" ${demoDisabledAttr(demoMode)}>Train</button>
       <button class="btn secondary" data-fine-tune-run="${a.id}" ${demoDisabledAttr(demoMode)}>Fine-Tune Job</button>
       <button class="btn secondary" data-fine-tune-export="${a.id}" ${demoDisabledAttr(demoMode)}>Dataset Export</button>
@@ -203,6 +365,9 @@ async function openAgent(id) {
       <button class="btn secondary" data-shadow-run="${a.id}" ${demoDisabledAttr(demoMode)}>Shadow Review</button>
       <button class="btn secondary" data-toggle-learn="${a.id}">${a.learningProfile?.enabled ? 'Autolearn aus' : 'Autolearn an'}</button>
       <button class="btn secondary" data-reset-learn="${a.id}">Learn reset</button>
+      <button class="btn secondary" data-brain-reflect="${a.id}">Brain Reflect</button>
+      <button class="btn secondary" data-avatar-refresh="${a.id}">Avatar Refresh</button>
+      <button class="btn secondary" data-install-brain-loop="${a.id}">Brain Loop</button>
       <button class="btn secondary" data-export-learning="${a.id}" ${demoDisabledAttr(demoMode)}>Learn Export</button>
       <button class="btn secondary" data-import-learning="${a.id}" ${demoDisabledAttr(demoMode)}>Learn Import</button>
       <button class="btn secondary" data-save-token="${a.id}" ${demoDisabledAttr(demoMode)}>Telegram Token speichern</button>
@@ -215,6 +380,78 @@ async function openAgent(id) {
       <button class="btn secondary" data-key="${a.id}">Regenerate Key</button>
       <button class="btn danger" data-del="${a.id}">Delete</button>
     </div>
+    <h3>Rick-C63 Brain & Agency</h3>
+    <div class="item" style="margin-bottom:16px;">
+      <div class="task"><strong>${esc(a.brainState?.summary || 'Noch keine Reflexion.')}</strong><span class="badge">${esc(a.lifecycleConfig?.stage || 'newborn')}</span></div>
+      <div class="muted tiny" style="margin-top:6px;">Mood: ${esc(a.lifecycleConfig?.mood || 'focused')} • Energy: ${esc(String(a.lifecycleConfig?.energy ?? 100))} • Agency: ${esc(a.agencyConfig?.mode || 'safe')}</div>
+      ${a.avatarState?.assetUrl ? `<div style="margin-top:12px;"><img src="${esc(a.avatarState.assetUrl)}" alt="avatar" style="width:120px;height:120px;border-radius:18px;border:1px solid rgba(148,163,184,.18)"></div>` : ''}
+      <div class="muted tiny" style="margin-top:8px;white-space:pre-wrap">${esc(a.avatarState?.currentPrompt || a.avatarState?.look || 'Noch kein Avatar-State.')}</div>
+      <div class="muted tiny" style="margin-top:8px;white-space:pre-wrap">Telegram: ${a.channelConfig?.telegram?.enabled ? 'on' : 'off'} • WhatsApp: ${a.channelConfig?.whatsapp?.enabled ? 'ready' : 'off'}</div>
+    </div>
+    <div class="split" style="grid-template-columns:1fr 1fr;gap:16px;align-items:start;margin-bottom:16px;">
+      <div>
+        <h3>Channels & Runtime</h3>
+        ${telegramStatusHtml}
+        ${channelStatusHtml}
+        <form id="channelTestForm" class="form" style="margin-top:12px;">
+          <div class="row">
+            <div class="field"><label>Kanal-Test</label><select name="channel"><option value="telegram">telegram</option><option value="whatsapp">whatsapp</option></select></div>
+            <div class="field"><label>Testnachricht</label><input name="message" placeholder="kurzer Kanal-Test"></div>
+          </div>
+          <button class="btn secondary" type="submit">Live-Test triggern</button>
+        </form>
+        <form id="channelConfigForm" class="form" style="margin-top:12px;">
+          <div class="field"><label><input type="checkbox" name="telegramEnabled" ${a.channelConfig?.telegram?.enabled ? 'checked' : ''}> Telegram aktiv</label></div>
+          <div class="row">
+            <div class="field"><label>Telegram Account ID</label><input name="telegramAccountId" value="${esc(a.channelConfig?.telegram?.accountId || a.automation?.telegramAccountId || '')}"></div>
+            <div class="field"><label>Telegram Bot Name</label><input name="telegramBotName" value="${esc(a.channelConfig?.telegram?.botName || a.automation?.telegramBotName || '')}"></div>
+          </div>
+          <div class="field"><label>Telegram Test Chat ID</label><input name="telegramTestChatId" value="${esc(a.channelConfig?.telegram?.testChatId || '')}" placeholder="z.B. 6363215511 oder -100..."></div>
+          <div class="field"><label><input type="checkbox" name="whatsappEnabled" ${a.channelConfig?.whatsapp?.enabled ? 'checked' : ''}> WhatsApp aktiv</label></div>
+          <div class="row">
+            <div class="field"><label>WhatsApp Target</label><input name="whatsappTarget" value="${esc(a.channelConfig?.whatsapp?.target || '')}" placeholder="z.B. +4179..."></div>
+            <div class="field"><label>WhatsApp Account ID</label><input name="whatsappAccountId" value="${esc(a.channelConfig?.whatsapp?.accountId || '')}" placeholder="z.B. rick-c63"></div>
+          </div>
+          <div class="field"><label>WhatsApp Webhook URL</label><input name="whatsappWebhookUrl" value="${esc(a.channelConfig?.whatsapp?.webhookUrl || '')}" placeholder="https://bridge.example/send"></div>
+          <button class="btn secondary" type="submit">Channels speichern</button>
+        </form>
+      </div>
+      <div>
+        <h3>Agency Control</h3>
+        <form id="agencyConfigForm" class="form">
+          <div class="row">
+            <div class="field"><label>Mode</label><select name="mode"><option value="safe" ${a.agencyConfig?.mode === 'safe' ? 'selected' : ''}>safe</option><option value="builder" ${a.agencyConfig?.mode === 'builder' ? 'selected' : ''}>builder</option><option value="rick_c63" ${a.agencyConfig?.mode === 'rick_c63' ? 'selected' : ''}>rick_c63</option></select></div>
+            <div class="field"><label>Max Files / Run</label><input name="maxFilesPerRun" type="number" min="1" max="200" value="${esc(String(a.agencyConfig?.maxFilesPerRun || 20))}"></div>
+          </div>
+          <div class="field"><label><input type="checkbox" name="canWriteFiles" ${a.agencyConfig?.canWriteFiles ? 'checked' : ''}> Dateien schreiben</label></div>
+          <div class="field"><label><input type="checkbox" name="canRunCommands" ${a.agencyConfig?.canRunCommands ? 'checked' : ''}> Commands erlauben</label></div>
+          <div class="field"><label>Allowed Paths (eine pro Zeile)</label><textarea name="allowedPaths">${esc(renderListText(a.agencyConfig?.allowedPaths || []))}</textarea></div>
+          <button class="btn secondary" type="submit">Agency speichern</button>
+        </form>
+        <form id="agencyWriteForm" class="form" style="margin-top:12px;">
+          <div class="field"><label>Datei schreiben</label><input name="path" placeholder="generated/test.txt"></div>
+          <div class="field"><textarea name="content" placeholder="Inhalt für Testdatei"></textarea></div>
+          <button class="btn secondary" type="submit">Write Test</button>
+        </form>
+        <form id="agencyCommandForm" class="form" style="margin-top:12px;">
+          <div class="field"><label>Command ausführen</label><input name="command" placeholder="npm test -- --runInBand"></div>
+          <div class="field"><label>CWD relativ zu allowedPath</label><input name="cwd" placeholder="."></div>
+          <button class="btn secondary" type="submit">Command anfragen</button>
+        </form>
+      </div>
+    </div>
+    <div class="split" style="grid-template-columns:1fr 1fr;gap:16px;align-items:start;margin-bottom:16px;">
+      <div>
+        <h3>Approvals</h3>
+        <div class="list">${approvalsHtml}</div>
+      </div>
+      <div>
+        <h3>Audit</h3>
+        <div class="list">${auditHtml}</div>
+      </div>
+    </div>
+    <div class="task" style="margin-bottom:8px;"><h3 style="margin:0;">Run Logs</h3><select id="runLogFilter"><option value="all" ${state.runLogFilter === 'all' ? 'selected' : ''}>alle</option><option value="telegram" ${state.runLogFilter === 'telegram' ? 'selected' : ''}>telegram</option><option value="whatsapp" ${state.runLogFilter === 'whatsapp' ? 'selected' : ''}>whatsapp</option><option value="automation" ${state.runLogFilter === 'automation' ? 'selected' : ''}>automation</option><option value="owner" ${state.runLogFilter === 'owner' ? 'selected' : ''}>owner</option><option value="public" ${state.runLogFilter === 'public' ? 'selected' : ''}>public</option><option value="other" ${state.runLogFilter === 'other' ? 'selected' : ''}>other</option></select></div>
+    <div class="list" style="margin-bottom:16px;">${runLogsHtml}</div>
     <h3>Rick-Sanchez-Tipps</h3>
     <div class="list" style="margin-bottom:16px;">${tips.length ? tips.map((tip, idx) => `<div class="item"><strong>#${idx + 1} ${esc(tip.title)}</strong><div class="muted tiny" style="margin-top:6px;">${esc(tip.why)}</div><div style="margin-top:8px;white-space:pre-wrap">${esc(tip.suggestion)}</div></div>`).join('') : '<div class="item">Noch keine Tipps.</div>'}</div>
     <div class="split" style="grid-template-columns:1fr 1fr;gap:16px;align-items:start;">
@@ -351,33 +588,40 @@ async function init() {
   $$('.tab').forEach((btn) => btn.addEventListener('click', () => showTab(btn.dataset.tab)));
   $('#refreshBtn').addEventListener('click', refreshDashboard);
   $('#logoutBtn').addEventListener('click', async () => {
-    if (state.demoMode) {
-      setStatus('Demo-Modus: kein Login nötig.', 'ok');
-      showTab('dashboard');
-      return;
-    }
     await api('/api/auth/logout', { method: 'POST', body: '{}' });
     state.me = null;
     state.workspaceId = null;
-    setStatus('Ausgeloggt.', 'ok');
+    setStatus(state.demoMode ? 'Lokal ausgeloggt.' : 'Ausgeloggt.', 'ok');
     showTab('auth');
     await refreshDashboard().catch(() => {});
   });
 
   $('#loginForm').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const fd = new FormData(e.target);
-    await api('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: fd.get('email'), password: fd.get('password') }) });
-    e.target.reset();
-    await refreshDashboard();
+    try {
+      const fd = new FormData(e.target);
+      await api('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: fd.get('email'), password: fd.get('password') }) });
+      e.target.reset();
+      setStatus(state.demoMode ? 'Lokal eingeloggt.' : 'Eingeloggt.', 'ok');
+      await refreshDashboard();
+    } catch (err) {
+      setStatus(translateError(err), 'error');
+      showTab('auth');
+    }
   });
 
   $('#registerForm').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const fd = new FormData(e.target);
-    await api('/api/auth/register', { method: 'POST', body: JSON.stringify({ name: fd.get('name'), email: fd.get('email'), password: fd.get('password') }) });
-    e.target.reset();
-    await refreshDashboard();
+    try {
+      const fd = new FormData(e.target);
+      await api('/api/auth/register', { method: 'POST', body: JSON.stringify({ name: fd.get('name'), email: fd.get('email'), password: fd.get('password') }) });
+      e.target.reset();
+      setStatus(state.demoMode ? 'Lokaler Account erstellt.' : 'Account erstellt.', 'ok');
+      await refreshDashboard();
+    } catch (err) {
+      setStatus(translateError(err), 'error');
+      showTab('auth');
+    }
   });
 
   $('#workspaceForm').addEventListener('submit', async (e) => {
@@ -430,7 +674,21 @@ async function init() {
 
   $('#workspaceSelect').addEventListener('change', (e) => {
     state.workspaceId = e.target.value;
+    saveAgentDraft($('#agentForm'));
   });
+
+  restoreAgentDraft($('#agentForm'));
+  $('#agentForm').addEventListener('input', () => saveAgentDraft($('#agentForm')));
+  $('#agentForm').addEventListener('change', () => saveAgentDraft($('#agentForm')));
+  bindDraftForm('workspaceForm', 'nemesis-workspace-draft-v1');
+  bindDraftForm('schoolForm', 'nemesis-school-draft-v1');
+  bindDraftForm('settingsForm', 'nemesis-settings-draft-v1');
+  bindDraftForm('importOpenClawForm', 'nemesis-import-draft-v1');
+  $('#magicFillBtn')?.addEventListener('click', () => applyMagicFill('default'));
+  $('#premiumPresetBtn')?.addEventListener('click', () => applyMagicFill('premium'));
+  renderLivePreview();
+  $('#agentForm').addEventListener('input', renderLivePreview);
+  $('#agentForm').addEventListener('change', renderLivePreview);
 
   $('#agentForm').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -438,26 +696,56 @@ async function init() {
     const fd = new FormData(e.target);
     const integrations = String(fd.get('integrations') || '').split(',').map((s) => s.trim()).filter(Boolean);
     const payload = {
-      workspaceId: fd.get('workspaceId'),
-      name: fd.get('name'),
-      appIdea: fd.get('appIdea'),
-      template: fd.get('template'),
-      businessType: fd.get('businessType'),
-      description: fd.get('description'),
-      tone: fd.get('tone'),
-      personality: fd.get('personality'),
-      language: fd.get('language'),
-      services: fd.get('services'),
-      rules: fd.get('rules'),
-      primaryColor: fd.get('primaryColor'),
-      secondaryColor: fd.get('secondaryColor'),
+      workspaceId: String(fd.get('workspaceId') || ''),
+      name: String(fd.get('name') || '').trim(),
+      appIdea: String(fd.get('appIdea') || '').trim(),
+      template: String(fd.get('template') || 'ai-tool').trim(),
+      businessType: String(fd.get('businessType') || 'Agent').trim(),
+      description: String(fd.get('description') || fd.get('appIdea') || '').trim(),
+      tone: String(fd.get('tone') || 'premium, klar, hilfreich').trim(),
+      personality: String(fd.get('personality') || 'smart, direkt, zuverlässig').trim(),
+      language: String(fd.get('language') || 'de').trim(),
+      services: String(fd.get('services') || '').trim(),
+      rules: String(fd.get('rules') || '').trim(),
+      primaryColor: String(fd.get('primaryColor') || '#667eea').trim(),
+      secondaryColor: String(fd.get('secondaryColor') || '#764ba2').trim(),
       integrations,
+      channelConfig: {
+        telegram: { enabled: fd.get('channelTelegram') === 'on' },
+        whatsapp: { enabled: fd.get('channelWhatsapp') === 'on' },
+      },
+      brainConfig: {
+        enabled: fd.get('brainEnabled') === 'on',
+        ownCharacter: fd.get('brainOwnCharacter') === 'on',
+        mutableAppearance: fd.get('brainMutableAppearance') === 'on',
+        selfLearning: fd.get('brainEnabled') === 'on',
+        avatarMode: String(fd.get('brainAvatarMode') || 'assisted'),
+      },
+      lifecycleConfig: {
+        enabled: fd.get('brainEnabled') === 'on',
+      },
+      agencyConfig: {
+        mode: String(fd.get('agencyMode') || 'safe'),
+        canWriteFiles: fd.get('agencyWriteFiles') === 'on',
+        canGenerateFiles: fd.get('agencyWriteFiles') === 'on',
+        canRunCommands: fd.get('agencyRunCommands') === 'on',
+        allowedPaths: ['/root/.openclaw/workspace/projects/agent-generator-v2/generated', '/root/.openclaw/workspace/projects/agent-generator-v2/public'],
+      },
+      tools: [
+        'generate_hosted_app',
+        'export_openclaw_bundle',
+        fd.get('agencyWriteFiles') === 'on' ? 'workspace_file_write' : '',
+        fd.get('agencyRunCommands') === 'on' ? 'workspace_shell' : '',
+        fd.get('channelTelegram') === 'on' ? 'telegram_channel' : '',
+        fd.get('channelWhatsapp') === 'on' ? 'whatsapp_channel' : '',
+      ].filter(Boolean),
     };
     const btn = e.target.querySelector('button[type="submit"]');
     btn.disabled = true;
     btn.textContent = 'Baue…';
     try {
       const out = await api('/api/agents', { method: 'POST', body: JSON.stringify(payload) });
+      clearAgentDraft();
       e.target.reset();
       setStatus(`Agent erstellt: ${out.agent.name}`, 'ok');
       showTab('dashboard');
@@ -495,12 +783,16 @@ async function init() {
     const shadowRun = e.target?.dataset?.shadowRun;
     const runtimeSync = e.target?.dataset?.runtimeSync;
     const runtimePush = e.target?.dataset?.runtimePush;
+    const brainReflect = e.target?.dataset?.brainReflect;
+    const avatarRefresh = e.target?.dataset?.avatarRefresh;
+    const installBrainLoop = e.target?.dataset?.installBrainLoop;
+    const approvalApprove = e.target?.dataset?.approvalApprove;
     if (e.target?.dataset?.demoDisabled === '1') return;
     if (copy) navigator.clipboard.writeText(copy);
     if (hosted) navigator.clipboard.writeText(hosted);
     if (gen) {
       const out = await api(`/api/agents/${gen}/generate`, { method: 'POST', body: '{}' });
-      alert(`Functional app generated: ${out.outputDir}`);
+      alert(`Generated: ${out.outputDir}`);
     }
     if (train) {
       await api(`/api/agents/${train}/train`, { method: 'POST', body: '{}' });
@@ -543,14 +835,31 @@ async function init() {
       await openAgent(shadowRun);
     }
     if (runtimeSync) {
-      await api(`/api/agents/${runtimeSync}/runtime-sync`, { method: 'POST', body: '{}' });
+      const out = await api(`/api/agents/${runtimeSync}/runtime-sync`, { method: 'POST', body: '{}' });
+      alert(`Runtime gelesen: ${out.result?.runtime?.id || 'ok'}`);
       await refreshDashboard();
       await openAgent(runtimeSync);
     }
     if (runtimePush) {
-      await api(`/api/agents/${runtimePush}/runtime-push`, { method: 'POST', body: '{}' });
+      const out = await api(`/api/agents/${runtimePush}/runtime-push`, { method: 'POST', body: '{}' });
+      alert(`Runtime geschrieben: ${out.result?.runtime?.id || 'ok'}`);
       await refreshDashboard();
       await openAgent(runtimePush);
+    }
+    if (brainReflect) {
+      await api(`/api/agents/${brainReflect}/brain/reflect`, { method: 'POST', body: JSON.stringify({ note: 'Manuell aus dem Studio angestoßen.' }) });
+      await refreshDashboard();
+      await openAgent(brainReflect);
+    }
+    if (avatarRefresh) {
+      await api(`/api/agents/${avatarRefresh}/brain/avatar-refresh`, { method: 'POST', body: '{}' });
+      await refreshDashboard();
+      await openAgent(avatarRefresh);
+    }
+    if (installBrainLoop) {
+      await api(`/api/agents/${installBrainLoop}/brain/install-loop`, { method: 'POST', body: '{}' });
+      await refreshDashboard();
+      await openAgent(installBrainLoop);
     }
     if (toggleLearn || resetLearn) {
       const agentId = toggleLearn || resetLearn;
@@ -592,6 +901,14 @@ async function init() {
       alert(`Token gespeichert: ${out.tokenFile}`);
       await refreshDashboard();
       await openAgent(saveToken);
+    }
+    if (approvalApprove) {
+      const agentId = $('#dialogPanel').querySelector('button[data-train]')?.dataset?.train;
+      if (!agentId) return;
+      const out = await api(`/api/agents/${agentId}/agency/approve/${approvalApprove}`, { method: 'POST', body: '{}' });
+      alert(out.result?.stdout || out.result?.path || out.result?.reason || out.result?.status || 'Approval ausgeführt.');
+      await refreshDashboard();
+      await openAgent(agentId);
     }
     if (schoolAdd) {
       const agentId = $('#dialogPanel').querySelector('button[data-train]')?.dataset?.train;
@@ -638,6 +955,7 @@ async function init() {
     const form = e.target;
     const agentId = $('#dialogPanel').querySelector('button[data-train]')?.dataset?.train;
     if (!agentId) return;
+    const currentAgent = state.dashboard?.agents?.find((x) => x.id === agentId) || {};
     if (form.id === 'editAgentForm') {
       e.preventDefault();
       const fd = new FormData(form);
@@ -665,6 +983,76 @@ async function init() {
         openclawAgentId: fd.get('openclawAgentId'),
         readyWebhookUrl: fd.get('readyWebhookUrl'),
       }) });
+      await refreshDashboard();
+      await openAgent(agentId);
+    }
+    if (form.id === 'channelConfigForm') {
+      e.preventDefault();
+      const fd = new FormData(form);
+      await api(`/api/agents/${agentId}`, { method: 'PATCH', body: JSON.stringify({
+        channelConfig: {
+          telegram: {
+            enabled: fd.get('telegramEnabled') === 'on',
+            accountId: fd.get('telegramAccountId'),
+            botName: fd.get('telegramBotName'),
+            testChatId: fd.get('telegramTestChatId'),
+          },
+          whatsapp: {
+            enabled: fd.get('whatsappEnabled') === 'on',
+            target: fd.get('whatsappTarget'),
+            accountId: fd.get('whatsappAccountId'),
+            webhookUrl: fd.get('whatsappWebhookUrl'),
+          },
+        },
+        automation: {
+          ...(currentAgent.automation || {}),
+          telegramAccountId: fd.get('telegramAccountId'),
+          telegramBotName: fd.get('telegramBotName'),
+        },
+      }) });
+      await refreshDashboard();
+      await openAgent(agentId);
+    }
+    if (form.id === 'channelTestForm') {
+      e.preventDefault();
+      const fd = new FormData(form);
+      const out = await api(`/api/agents/${agentId}/channel-test`, { method: 'POST', body: JSON.stringify({ channel: fd.get('channel'), message: fd.get('message') }) });
+      alert(out.run?.summary || out.run?.output?.reply || 'Kanal-Test ausgeführt.');
+      await refreshDashboard();
+      await openAgent(agentId);
+    }
+    if (form.id === 'agencyConfigForm') {
+      e.preventDefault();
+      const fd = new FormData(form);
+      await api(`/api/agents/${agentId}`, { method: 'PATCH', body: JSON.stringify({
+        agencyConfig: {
+          ...(currentAgent.agencyConfig || {}),
+          mode: fd.get('mode'),
+          maxFilesPerRun: Number(fd.get('maxFilesPerRun') || 20),
+          canWriteFiles: fd.get('canWriteFiles') === 'on',
+          canGenerateFiles: fd.get('canWriteFiles') === 'on',
+          canRunCommands: fd.get('canRunCommands') === 'on',
+          allowedPaths: String(fd.get('allowedPaths') || '').split('\n').map((s) => s.trim()).filter(Boolean),
+        },
+      }) });
+      await refreshDashboard();
+      await openAgent(agentId);
+    }
+    if (form.id === 'agencyWriteForm') {
+      e.preventDefault();
+      const fd = new FormData(form);
+      const out = await api(`/api/agents/${agentId}/agency/act`, { method: 'POST', body: JSON.stringify({ action: 'write_file', payload: { path: fd.get('path'), content: fd.get('content') } }) });
+      form.reset();
+      alert(out.result?.status === 'approval_required' ? 'Write braucht Approval.' : `Write: ${out.result?.path || out.result?.status}`);
+      await refreshDashboard();
+      await openAgent(agentId);
+    }
+    if (form.id === 'agencyCommandForm') {
+      e.preventDefault();
+      const fd = new FormData(form);
+      const out = await api(`/api/agents/${agentId}/agency/act`, { method: 'POST', body: JSON.stringify({ action: 'run_command', payload: { command: fd.get('command'), cwd: fd.get('cwd') } }) });
+      form.reset();
+      alert(out.result?.status === 'approval_required' ? 'Command wartet auf Approval.' : `Exit: ${out.result?.exitCode ?? out.result?.status}`);
       await refreshDashboard();
       await openAgent(agentId);
     }
@@ -761,7 +1149,34 @@ async function init() {
     }
   });
 
-  try { await refreshDashboard(); } catch (err) { setStatus(err.message, 'error'); showTab('auth'); }
+  $('#dialogPanel').addEventListener('change', async (e) => {
+    if (e.target?.id === 'runLogFilter') {
+      state.runLogFilter = e.target.value || 'all';
+      const agentId = $('#dialogPanel').querySelector('button[data-train]')?.dataset?.train;
+      if (agentId) await openAgent(agentId);
+    }
+  });
+
+  try {
+    await refreshDashboard();
+  } catch (err) {
+    try {
+      const cached = JSON.parse(localStorage.getItem(DASHBOARD_CACHE_KEY) || '{}');
+      if (cached?.agents || cached?.workspaces) {
+        state.dashboard = cached;
+        state.me = cached.user || { name: 'Elija' };
+        renderStats(cached.stats || {});
+        renderWorkspaces(cached.workspaces || []);
+        renderSettings(cached.settings || {});
+        $('#agentList').innerHTML = (cached.agents || []).length ? cached.agents.map(agentCard).join('') : '<div class="item">Noch keine Agenten.</div>';
+        setStatus('Lokaler Cache geladen. App war offline oder das API hat gehakt.', 'ok');
+        showTab('dashboard');
+        return;
+      }
+    } catch {}
+    setStatus(translateError(err), 'error');
+    showTab('dashboard');
+  }
 }
 
 if ('serviceWorker' in navigator) {

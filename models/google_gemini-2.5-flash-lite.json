@@ -1,0 +1,9 @@
+{
+  "modelId": "google/gemini-2.5-flash-lite",
+  "cacheDir": "/root/.openclaw/workspace/projects/agent-generator-v2/models",
+  "downloadedAt": "2026-07-14T17:04:01.072Z",
+  "provider": "google",
+  "fallbackIndex": 10,
+  "status": "available",
+  "description": "Kostenloses KI-Modell für die Offline-Nutzung im Agent-Generator"
+}

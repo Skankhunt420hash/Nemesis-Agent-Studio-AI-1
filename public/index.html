@@ -16,41 +16,67 @@
     <div class="shell">
       <div class="topbar">
         <div class="brand">
-          <h1>OpenClaw Agent Studio</h1>
-          <p>Agenten bauen, füttern, trainieren, bearbeiten und per Telegram steuern.</p>
+          <h1>Nemesis Agent Generator V2</h1>
+          <p>Dein persönliches Studio zum Bauen, Trainieren und Verwalten deiner Agenten.</p>
         </div>
-        <div class="tabs">
-          <button class="tab active" data-tab="dashboard">Dashboard</button>
-          <button class="tab" data-tab="create">Agent bauen</button>
-          <button class="tab" data-tab="auth">Login / Register</button>
+        <div class="topbar-side">
+          <div class="mode-badge">Single-User-Modus</div>
+          <div class="tabs">
+            <button class="tab active" data-tab="dashboard">Übersicht</button>
+            <button class="tab" data-tab="create">Agent erstellen</button>
+          </div>
         </div>
       </div>
 
       <div class="content">
+        <section class="hero-card">
+          <div>
+            <div class="hero-kicker">NEMESIS WORKSPACE</div>
+            <h2>Alles Wichtige auf einen Blick</h2>
+            <p class="muted">Ohne Login, direkt einsatzbereit, mit Fokus auf deine Agenten und deren Workflows.</p>
+          </div>
+          <div class="hero-points">
+            <div class="hero-point"><strong>Schnell</strong><span>Direkt in die App ohne Anmeldung</span></div>
+            <div class="hero-point"><strong>Klar</strong><span>Weniger Ballast, mehr Fokus auf Agenten</span></div>
+            <div class="hero-point"><strong>Lokal</strong><span>Single-User-Modus für deinen eigenen Flow</span></div>
+          </div>
+        </section>
+
         <div id="status" class="notice">Lade…</div>
 
-        <section id="authTab" class="card loginbox hidden">
-          <h2>Account</h2>
-          <div class="split">
-            <form id="loginForm" class="form">
-              <h3>Login</h3>
-              <div class="field"><label>Email</label><input name="email" type="email" required></div>
-              <div class="field"><label>Password</label><input name="password" type="password" minlength="8" required></div>
-              <button class="btn" type="submit">Einloggen</button>
+        <section id="authTab" class="card loginbox hidden auth-shell">
+          <div class="auth-hero">
+            <div>
+              <h2>Login & Registrierung</h2>
+              <p class="muted">Jetzt mit lokalem APK-Modus: Registrierung und Login funktionieren auch ohne externes Backend.</p>
+            </div>
+            <div class="auth-badges">
+              <span class="chip">APK-ready</span>
+              <span class="chip">Lokaler Modus</span>
+              <span class="chip">Workspace-Support</span>
+            </div>
+          </div>
+          <div class="auth-note">Wenn kein Server erreichbar ist, speichert die App Accounts und Workspaces lokal auf dem Gerät.</div>
+          <div class="split auth-split">
+            <form id="loginForm" class="form auth-form">
+              <h3>Einloggen</h3>
+              <div class="field"><label>E-Mail</label><input name="email" type="email" placeholder="du@beispiel.de" required></div>
+              <div class="field"><label>Passwort</label><input name="password" type="password" minlength="8" placeholder="mindestens 8 Zeichen" required></div>
+              <button class="btn" type="submit">Jetzt einloggen</button>
             </form>
-            <form id="registerForm" class="form">
-              <h3>Register</h3>
-              <div class="field"><label>Name</label><input name="name" type="text" required></div>
-              <div class="field"><label>Email</label><input name="email" type="email" required></div>
-              <div class="field"><label>Password</label><input name="password" type="password" minlength="8" required></div>
+            <form id="registerForm" class="form auth-form auth-form-alt">
+              <h3>Neu registrieren</h3>
+              <div class="field"><label>Name</label><input name="name" type="text" placeholder="Dein Name" required></div>
+              <div class="field"><label>E-Mail</label><input name="email" type="email" placeholder="du@beispiel.de" required></div>
+              <div class="field"><label>Passwort</label><input name="password" type="password" minlength="8" placeholder="mindestens 8 Zeichen" required></div>
               <button class="btn secondary" type="submit">Account erstellen</button>
             </form>
           </div>
         </section>
 
         <section id="dashboardTab" class="grid">
-          <div class="card">
-            <h2>Dashboard</h2>
+          <div class="card main-panel">
+            <h2>Übersicht</h2>
             <div id="stats" class="stats"></div>
             <div class="actions" style="margin-bottom:12px;">
               <button id="refreshBtn" class="btn secondary">Aktualisieren</button>
@@ -58,7 +84,7 @@
             </div>
             <div id="agentList" class="agents"></div>
           </div>
-          <div class="card">
+          <div class="card side-panel">
             <h2>Workspace</h2>
             <div id="workspaceList" class="list"></div>
             <form id="workspaceForm" class="form" style="margin-top:14px;">
@@ -67,7 +93,7 @@
             </form>
             <div class="notice" style="margin-top:14px;">Teams kommen jetzt rein. Nächster Schritt: Mitglieder, Rollen, Einladungen.</div>
           </div>
-          <div class="card">
+          <div class="card side-panel">
             <h2>Schools</h2>
             <div id="schoolList" class="list"></div>
             <form id="schoolForm" class="form" style="margin-top:14px;">
@@ -77,8 +103,8 @@
               <button class="btn secondary" type="submit">School anlegen</button>
             </form>
           </div>
-          <div class="card">
-            <h2>Router</h2>
+          <div class="card side-panel">
+            <h2>Modelle & Router</h2>
             <div class="notice">GPT-4.5 für Standard, Claude 4 fürs Coding, Free-Fallbacks wenn Quotas dicht machen.</div>
             <form id="settingsForm" class="form" style="margin-top:14px;">
               <div class="field"><label><input type="checkbox" name="routerEnabled" checked> Router aktiv</label></div>
@@ -88,7 +114,7 @@
               <button class="btn secondary" type="submit">Router speichern</button>
             </form>
           </div>
-          <div class="card">
+          <div class="card side-panel">
             <h2>Vorhandene Telegram/OpenClaw-Agenten</h2>
             <div class="notice">Hier kannst du bestehende Agenten ins Studio ziehen, statt neue Klone anzulegen.</div>
             <div id="openclawRuntimeList" class="list" style="margin-top:14px;"></div>
@@ -102,41 +128,90 @@
           </div>
         </section>
 
-        <section id="createTab" class="card hidden" style="margin-top:20px;">
-          <h2>Neuen Agenten erstellen</h2>
-          <form id="agentForm" class="form">
-            <div class="field"><label>Workspace</label><select name="workspaceId" id="workspaceSelect"></select></div>
-            <div class="row">
-              <div class="field"><label>Name</label><input name="name" required></div>
-              <div class="field"><label>Business Typ</label><input name="businessType" placeholder="restaurant, ecommerce, ..." required></div>
+        <section id="createTab" class="card hidden create-panel" style="margin-top:20px;">
+          <div class="create-hero">
+            <div>
+              <div class="hero-kicker">AGENT IN 3 SCHRITTEN</div>
+              <h2>Neuen Agenten erstellen</h2>
+              <p class="muted">So einfach wie ein Bild erstellen: Name eingeben, Aufgabe beschreiben, bauen.</p>
             </div>
-            <div class="field"><label>App-Idee</label><textarea name="appIdea" placeholder="Was soll die App tun?" required></textarea></div>
-            <div class="field"><label>Template</label><select name="template"><option value="saas">SaaS</option><option value="marketplace">Marketplace</option><option value="booking">Booking</option><option value="ai-tool">AI Tool</option><option value="crm">CRM</option></select></div>
-            <div class="field"><label>Beschreibung</label><textarea name="description" required></textarea></div>
-            <div class="row">
-              <div class="field"><label>Tonalität</label><input name="tone" value="professional" required></div>
-              <div class="field"><label>Persönlichkeit</label><input name="personality" value="helpful" required></div>
+            <div class="create-pills">
+              <span class="chip">Bubby-einfach</span>
+              <span class="chip">Premium-Technik</span>
+              <span class="chip">OpenClaw-ready</span>
             </div>
-            <div class="row">
-              <div class="field"><label>Sprache</label><input name="language" value="de" required></div>
-              <div class="field"><label>Services</label><input name="services" placeholder="optional"></div>
-            </div>
-            <div class="field"><label>Regeln</label><textarea name="rules" placeholder="optional"></textarea></div>
-            <div class="row">
-              <div class="field"><label>Primary Color</label><input name="primaryColor" type="color" value="#667eea"></div>
-              <div class="field"><label>Secondary Color</label><input name="secondaryColor" type="color" value="#764ba2"></div>
-            </div>
-            <div class="field"><label>Integrations</label><input name="integrations" placeholder="telegram, whatsapp, email (comma separated)"></div>
-            <button class="btn" type="submit">Agent bauen</button>
-          </form>
+          </div>
+          <div class="premium-create-grid">
+            <form id="agentForm" class="form simple-create-form">
+              <div class="field"><label>Workspace</label><select name="workspaceId" id="workspaceSelect"></select></div>
+              <div class="field field-xl"><label>Name deines Agenten</label><input name="name" placeholder="z. B. Nemesis Sales Brain" required></div>
+              <div class="field field-xl"><label>Was soll der Agent für dich tun?</label><textarea name="appIdea" placeholder="Beschreibe in 1–3 Sätzen ganz einfach, was der Agent können soll." required></textarea></div>
+              <div class="quick-actions">
+                <button class="btn secondary" type="button" id="magicFillBtn">1-Klick-Generator</button>
+                <button class="btn secondary" type="button" id="premiumPresetBtn">Premium-Preset laden</button>
+              </div>
+              <div class="row compact-row">
+                <div class="field"><label>Typ</label><input name="businessType" placeholder="z. B. Sales, Support, Automatisierung" required></div>
+                <div class="field"><label>Vorlage</label><select name="template"><option value="ai-tool">AI Tool</option><option value="saas">SaaS</option><option value="crm">CRM</option><option value="booking">Booking</option><option value="marketplace">Marketplace</option></select></div>
+              </div>
+              <div class="field"><label>Kurzbeschreibung</label><textarea name="description" placeholder="Was ist das Ergebnis für dich oder deine Kunden?"></textarea></div>
+              <details class="advanced-box">
+                <summary>Erweiterte Optionen</summary>
+                <div class="form" style="margin-top:12px;">
+                  <div class="row">
+                    <div class="field"><label>Tonalität</label><input name="tone" value="premium, klar, hilfreich"></div>
+                    <div class="field"><label>Persönlichkeit</label><input name="personality" value="smart, direkt, zuverlässig"></div>
+                  </div>
+                  <div class="row">
+                    <div class="field"><label>Sprache</label><input name="language" value="de"></div>
+                    <div class="field"><label>Services</label><input name="services" placeholder="optional"></div>
+                  </div>
+                  <div class="field"><label>Regeln</label><textarea name="rules" placeholder="optional"></textarea></div>
+                  <div class="row">
+                    <div class="field"><label>Primary Color</label><input name="primaryColor" type="color" value="#667eea"></div>
+                    <div class="field"><label>Secondary Color</label><input name="secondaryColor" type="color" value="#764ba2"></div>
+                  </div>
+                  <div class="field"><label>Integrationen</label><input name="integrations" placeholder="telegram, whatsapp, email"></div>
+                  <div class="item" style="margin-top:12px;">
+                    <h3>Rick-C63 / Brain</h3>
+                    <div class="field"><label><input type="checkbox" name="brainEnabled"> Eigenes Gehirn aktivieren</label></div>
+                    <div class="field"><label><input type="checkbox" name="brainOwnCharacter" checked> Eigener Charakter darf entstehen</label></div>
+                    <div class="field"><label><input type="checkbox" name="brainMutableAppearance" checked> Avatar/Aussehen darf sich ändern</label></div>
+                    <div class="field"><label>Avatar Modus</label><select name="brainAvatarMode"><option value="assisted">assisted</option><option value="self_generated">self_generated</option><option value="manual">manual</option></select></div>
+                    <div class="field"><label>Agency Mode</label><select name="agencyMode"><option value="safe">safe</option><option value="builder">builder</option><option value="rick_c63">rick_c63</option></select></div>
+                    <div class="field"><label><input type="checkbox" name="agencyWriteFiles"> Dateien ändern/generieren</label></div>
+                    <div class="field"><label><input type="checkbox" name="agencyRunCommands"> Commands ausführen (Approval)</label></div>
+                    <div class="field"><label><input type="checkbox" name="channelTelegram"> Telegram aktivieren</label></div>
+                    <div class="field"><label><input type="checkbox" name="channelWhatsapp"> WhatsApp vorbereiten</label></div>
+                  </div>
+                </div>
+              </details>
+              <button class="btn create-btn" type="submit">Agent jetzt bauen</button>
+            </form>
+            <aside class="live-preview-panel" id="livePreviewPanel">
+              <div class="preview-head">
+                <div class="hero-kicker">LIVE PREVIEW</div>
+                <h3 id="previewName">Neuer Premium-Agent</h3>
+                <p class="muted" id="previewPromise">Hier siehst du sofort, wie der Agent als Produkt wirkt.</p>
+              </div>
+              <div class="preview-stack">
+                <div class="preview-box"><strong>DNA</strong><div id="previewDna"></div></div>
+                <div class="preview-box"><strong>Prompt Engine</strong><div id="previewPrompt"></div></div>
+                <div class="preview-box"><strong>Team</strong><div id="previewTeam"></div></div>
+                <div class="preview-box"><strong>Deploy</strong><div id="previewDeploy"></div></div>
+                <div class="preview-box"><strong>Conversation Lab</strong><div id="previewLab"></div></div>
+              </div>
+            </aside>
+          </div>
         </section>
       </div>
 
-      <div class="footer">v2 • Persistenz • Workspaces • Login • Telegram • OpenClaw • Export als Nächstes</div>
+      <div class="footer">Nemesis Agent Generator V2 • Single-User • Telegram • OpenClaw • Lokaler Workflow</div>
     </div>
   </div>
 
   <div id="dialog" class="dialog"><div class="panel" id="dialogPanel"></div></div>
+  <script src="/local-api.js" defer></script>
   <script src="/app.js" defer></script>
 </body>
 </html>

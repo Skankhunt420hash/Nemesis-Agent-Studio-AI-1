@@ -1,0 +1,9 @@
+{
+  "modelId": "openrouter/alfred/matcha:free",
+  "cacheDir": "/root/.openclaw/workspace/projects/agent-generator-v2/models",
+  "downloadedAt": "2026-07-14T17:04:01.070Z",
+  "provider": "openrouter",
+  "fallbackIndex": 5,
+  "status": "available",
+  "description": "Kostenloses KI-Modell für die Offline-Nutzung im Agent-Generator"
+}

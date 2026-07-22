@@ -1,0 +1,9 @@
+{
+  "modelId": "openrouter/cohere/north-mini-code:free",
+  "cacheDir": "/root/.openclaw/workspace/projects/agent-generator-v2/models",
+  "downloadedAt": "2026-07-14T17:04:01.069Z",
+  "provider": "openrouter",
+  "fallbackIndex": 2,
+  "status": "available",
+  "description": "Kostenloses KI-Modell für die Offline-Nutzung im Agent-Generator"
+}

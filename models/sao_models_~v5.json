@@ -1,0 +1,9 @@
+{
+  "modelId": "sao/models/~v5",
+  "cacheDir": "/root/.openclaw/workspace/projects/agent-generator-v2/models",
+  "downloadedAt": "2026-07-14T17:04:01.073Z",
+  "provider": "sao",
+  "fallbackIndex": 15,
+  "status": "available",
+  "description": "Kostenloses KI-Modell für die Offline-Nutzung im Agent-Generator"
+}

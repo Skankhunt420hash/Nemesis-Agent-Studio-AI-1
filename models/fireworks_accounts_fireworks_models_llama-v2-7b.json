@@ -1,0 +1,9 @@
+{
+  "modelId": "fireworks/accounts/fireworks/models/llama-v2-7b",
+  "cacheDir": "/root/.openclaw/workspace/projects/agent-generator-v2/models",
+  "downloadedAt": "2026-07-14T17:04:01.073Z",
+  "provider": "fireworks",
+  "fallbackIndex": 17,
+  "status": "available",
+  "description": "Kostenloses KI-Modell für die Offline-Nutzung im Agent-Generator"
+}

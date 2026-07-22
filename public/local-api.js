@@ -1,5 +1,6 @@
 (() => {
   const STORAGE_KEY = 'agent-studio-demo-v2';
+  const STORAGE_BACKUP_KEY = 'agent-studio-demo-v2-backup';
   const DEMO_TOKEN_FILE = 'local-demo-token';
   const demoState = (window.__LOCAL_DEMO_API__ = window.__LOCAL_DEMO_API__ || { enabled: false });
   const nativeFetch = window.fetch.bind(window);
@@ -60,23 +61,38 @@
     conversations: [],
   });
 
+  function normalizeState(raw = {}) {
+    return {
+      ...defaultState(),
+      ...raw,
+      settings: { ...defaultSettings(), ...(raw.settings || {}) },
+      schools: Array.isArray(raw.schools) && raw.schools.length ? raw.schools : defaultSchools(),
+      runtimeAgents: Array.isArray(raw.runtimeAgents) && raw.runtimeAgents.length ? raw.runtimeAgents : defaultRuntimeAgents(),
+      users: Array.isArray(raw.users) ? raw.users : [],
+      workspaces: Array.isArray(raw.workspaces) ? raw.workspaces : [],
+      agents: Array.isArray(raw.agents) ? raw.agents : [],
+    };
+  }
+
   function readState() {
     try {
-      const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
-      return {
-        ...defaultState(),
-        ...raw,
-        settings: { ...defaultSettings(), ...(raw.settings || {}) },
-        schools: Array.isArray(raw.schools) && raw.schools.length ? raw.schools : defaultSchools(),
-        runtimeAgents: Array.isArray(raw.runtimeAgents) && raw.runtimeAgents.length ? raw.runtimeAgents : defaultRuntimeAgents(),
-      };
+      const primary = localStorage.getItem(STORAGE_KEY);
+      const backup = localStorage.getItem(STORAGE_BACKUP_KEY);
+      const raw = primary || backup || '{}';
+      return normalizeState(JSON.parse(raw));
     } catch {
-      return defaultState();
+      try {
+        return normalizeState(JSON.parse(localStorage.getItem(STORAGE_BACKUP_KEY) || '{}'));
+      } catch {
+        return defaultState();
+      }
     }
   }
 
   function writeState(state) {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    const payload = JSON.stringify(state);
+    localStorage.setItem(STORAGE_KEY, payload);
+    localStorage.setItem(STORAGE_BACKUP_KEY, payload);
     return state;
   }
 
@@ -141,6 +157,78 @@
       state.workspaces.unshift(workspace);
     }
     return workspace;
+  }
+
+  function buildDnaProfile(input = {}) {
+    const idea = String(input.appIdea || input.description || '').trim();
+    const businessType = String(input.businessType || 'Agent').trim();
+    const tone = String(input.tone || 'premium, klar, hilfreich').trim();
+    const personality = String(input.personality || 'smart, direkt, zuverlässig').trim();
+    return {
+      coreRole: `${businessType}-Agent`,
+      tone,
+      personality,
+      promise: idea || 'Löst Aufgaben schnell und klar.',
+      styleTags: [businessType, tone.split(',')[0] || tone, personality.split(',')[0] || personality].filter(Boolean),
+      guardrails: ['Kein Halluzinieren', 'Klar antworten', 'Handlungsorientiert bleiben'],
+    };
+  }
+
+  function buildPromptEngine(input = {}) {
+    const dna = buildDnaProfile(input);
+    return {
+      mode: 'premium_autobuilder',
+      summary: `Du bist ${dna.coreRole}. Aufgabe: ${dna.promise}`,
+      systemPrompt: [
+        `Rolle: ${dna.coreRole}`,
+        `Ton: ${dna.tone}`,
+        `Persönlichkeit: ${dna.personality}`,
+        `Mission: ${dna.promise}`,
+        `Regeln: ${(dna.guardrails || []).join(' | ')}`,
+      ].join('\n'),
+    };
+  }
+
+  function buildMemoryConfig(input = {}) {
+    return {
+      enabled: true,
+      mode: 'auto-learning',
+      sources: ['feedback', 'chat-history', 'agent-edits'],
+      summary: String(input.appIdea || input.description || '').trim().slice(0, 180),
+    };
+  }
+
+  function buildTeamBlueprint(input = {}) {
+    const type = String(input.businessType || 'Agent').trim();
+    return {
+      enabled: true,
+      roles: [
+        { name: 'Captain', job: `${type} steuern` },
+        { name: 'Research', job: 'Infos sammeln' },
+        { name: 'Execution', job: 'Antworten und Tasks ausführen' },
+      ],
+    };
+  }
+
+  function buildDeployPlan(input = {}) {
+    return {
+      enabled: true,
+      channels: ['telegram', 'openclaw-web'],
+      targetName: slugify(input.name || 'agent'),
+      status: 'ready_for_one_tap',
+    };
+  }
+
+  function buildConversationLab(input = {}) {
+    return {
+      enabled: true,
+      scenarios: [
+        'Neukunde fragt zum Angebot',
+        'Skeptischer Nutzer stellt Rückfrage',
+        'Hot lead will klare Entscheidung',
+      ],
+      focus: String(input.businessType || 'Agent').trim(),
+    };
   }
 
   function summarizeAgent(agent) {
@@ -377,7 +465,7 @@
     const state = readState();
     const user = currentUser(state) || ensureDemoOwner(state);
 
-    if (path === '/api/me' && method === 'GET') return json({ user: sanitizeUser(user), demoMode: true });
+    if (path === '/api/me' && method === 'GET') return json({ user: sanitizeUser(user), demoMode: true, singleUserMode: true });
 
     if (path === '/api/auth/register' && method === 'POST') {
       const name = String(body.name || '').trim();
@@ -603,6 +691,56 @@
     if (path === '/api/agents' && method === 'POST') {
       const workspace = state.workspaces.find((w) => w.id === body.workspaceId) || ensureWorkspace(state, user);
       const name = String(body.name || '').trim() || 'New Agent';
+      const appIdea = String(body.appIdea || '').trim();
+      const description = String(body.description || appIdea || '').trim();
+      const businessType = String(body.businessType || 'Agent').trim();
+      const tone = String(body.tone || 'premium, klar, hilfreich').trim();
+      const personality = String(body.personality || 'smart, direkt, zuverlässig').trim();
+      const language = String(body.language || 'Deutsch').trim();
+      const dnaProfile = {
+        coreRole: `${businessType}-Agent`,
+        tone,
+        personality,
+        promise: appIdea || description || 'Löst Aufgaben schnell und klar.',
+        styleTags: [businessType, tone.split(',')[0] || tone, personality.split(',')[0] || personality].filter(Boolean),
+        guardrails: ['Kein Halluzinieren', 'Klar antworten', 'Handlungsorientiert bleiben'],
+      };
+      const promptEngine = {
+        mode: 'premium_autobuilder',
+        summary: `Du bist ${dnaProfile.coreRole}. Aufgabe: ${dnaProfile.promise}`,
+        systemPrompt: [
+          `Rolle: ${dnaProfile.coreRole}`,
+          `Ton: ${dnaProfile.tone}`,
+          `Persönlichkeit: ${dnaProfile.personality}`,
+          `Mission: ${dnaProfile.promise}`,
+          `Regeln: ${(dnaProfile.guardrails || []).join(' | ')}`,
+        ].join('\n'),
+      };
+      const memoryConfig = {
+        enabled: true,
+        mode: 'auto-learning',
+        sources: ['feedback', 'chat-history', 'agent-edits'],
+        summary: (appIdea || description).slice(0, 180),
+      };
+      const teamBlueprint = {
+        enabled: true,
+        roles: [
+          { name: 'Captain', job: `${businessType} steuern` },
+          { name: 'Research', job: 'Infos sammeln' },
+          { name: 'Execution', job: 'Antworten und Tasks ausführen' },
+        ],
+      };
+      const deployPlan = {
+        enabled: true,
+        channels: ['telegram', 'openclaw-web'],
+        targetName: slugify(name),
+        status: 'ready_for_one_tap',
+      };
+      const conversationLab = {
+        enabled: true,
+        scenarios: ['Neukunde fragt zum Angebot', 'Skeptischer Nutzer stellt Rückfrage', 'Hot lead will klare Entscheidung'],
+        focus: businessType,
+      };
       const agent = {
         id: uid('agt_'),
         userId: user.id,
@@ -610,13 +748,13 @@
         workspaceName: workspace.name,
         name,
         slug: slugify(body.slug || name),
-        appIdea: String(body.appIdea || '').trim(),
+        appIdea,
         template: String(body.template || 'saas').trim(),
-        businessType: String(body.businessType || '').trim(),
-        description: String(body.description || '').trim(),
-        tone: String(body.tone || '').trim(),
-        personality: String(body.personality || '').trim(),
-        language: String(body.language || 'Deutsch').trim(),
+        businessType,
+        description,
+        tone,
+        personality,
+        language,
         services: String(body.services || '').trim(),
         rules: String(body.rules || '').trim(),
         trainingNotes: '',
@@ -635,6 +773,12 @@
         workspaceLearningProfile: workspace.learningProfile || defaultLearningProfile(),
         telegramTokenStored: false,
         schoolIds: [],
+        dnaProfile,
+        promptEngine,
+        memoryConfig,
+        teamBlueprint,
+        deployPlan,
+        conversationLab,
         createdAt: nowIso(),
         updatedAt: nowIso(),
       };
@@ -890,7 +1034,9 @@
     if (!url.pathname.startsWith('/api/')) return nativeFetch(input, init);
     try {
       const response = await nativeFetch(input, init);
-      if (![404, 405, 501].includes(response.status)) return response;
+      const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+      const looksWrongForApi = response.ok && !contentType.includes('application/json');
+      if (![404, 405, 501].includes(response.status) && !looksWrongForApi) return response;
     } catch {}
     return handleLocalApi(input, init);
   };
